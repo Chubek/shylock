@@ -1,0 +1,90 @@
+import std.os.CommandLine as CLI;
+import std.os.OS_Path as Path;
+import std.parsec.parsec as Scan;
+
+extern fn shy_discover(provider: string, query: string, capture: string, root: string) -> i64;
+extern fn shy_extract(capture: string, url: string, captured_at: i64, rules: string, model_reply: string) -> i64;
+extern fn shy_capture_page(url: string) -> i64;
+extern fn shy_estimate(series: string, horizon: i64, emit: i64) -> i64;
+extern fn shy_optimize(scenarios: string, floor: i64, cap: i64, tick: i64, cost: i64) -> i64;
+extern fn shy_formula(path: string, reference: i64, weekend: i64, premium: i64) -> i64;
+extern fn shy_report_rate(reference: i64, proposed: i64, adjusted: i64, weekend: i64, premium: i64, floor: i64, cap: i64, tick: i64) -> i64;
+extern fn shy_error(message: string) -> i64;
+
+fn parse_int(text: string) -> i64 {
+  let (ok, value, end) = Scan.basis_parsec_int(text, 0);
+  if !ok || end != text_len(text) { return -1; }
+  return value;
+}
+
+fn adjust(path: string, reference: i64, weekend: i64, premium: i64,
+          floor: i64, cap: i64, tick: i64) -> i64 {
+  if reference < 0 || reference > 1000000000000 || weekend < 0 || weekend > 1 ||
+     premium < 0 || premium > 10000 || floor < 0 || cap < floor ||
+     cap > 1000000000000 || tick <= 0 || tick > 1000000000000 {
+    return shy_error("invalid adjustment inputs");
+  }
+  let low = ((floor + tick - 1) / tick) * tick;
+  let high = (cap / tick) * tick;
+  if low > high { return shy_error("no allowed rate on tick grid"); }
+  let proposed = shy_formula(path, reference, weekend, premium);
+  if proposed < 0 { return shy_report_rate(reference, proposed, -1, weekend, premium, floor, cap, tick); }
+  var rate = ((proposed + tick / 2) / tick) * tick;
+  if rate < low { rate = low; }
+  if rate > high { rate = high; }
+  return shy_report_rate(reference, proposed, rate, weekend, premium, floor, cap, tick);
+}
+
+fn main() -> i64 {
+  let command = CLI.basis_command_line_get_env("SHY_COMMAND");
+  let count = parse_int(CLI.basis_command_line_get_env("SHY_COUNT"));
+  let a = CLI.basis_command_line_get_env("SHY_1");
+  let b = CLI.basis_command_line_get_env("SHY_2");
+  let c = CLI.basis_command_line_get_env("SHY_3");
+  let d = CLI.basis_command_line_get_env("SHY_4");
+  if command == "discover" && (count == 2 || count == 3) {
+    let root = CLI.basis_command_line_get_env("SHY_ROOT");
+    let providers = CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
+    if providers == "" {
+      return shy_discover(a, b, c, Path.basis_path_join(root, "third_party/mulib/library/elvi-scrape"));
+    }
+    return shy_discover(a, b, c, providers);
+  }
+  if command == "capture" && count == 1 { return shy_capture_page(a); }
+  if command == "extract" && count >= 3 && count <= 5 {
+    return shy_extract(a, b, parse_int(c), d, CLI.basis_command_line_get_env("SHY_5"));
+  }
+  if command == "estimate" && count == 2 {
+    return shy_estimate(a, parse_int(b), 1);
+  }
+  if command == "recommend" && count == 8 {
+    let reference = shy_estimate(a, parse_int(b), 0);
+    if reference < 0 { return 2; }
+    return adjust(c, reference, parse_int(d),
+      parse_int(CLI.basis_command_line_get_env("SHY_5")),
+      parse_int(CLI.basis_command_line_get_env("SHY_6")),
+      parse_int(CLI.basis_command_line_get_env("SHY_7")),
+      parse_int(CLI.basis_command_line_get_env("SHY_8")));
+  }
+  if command == "optimize" && count == 5 {
+    return shy_optimize(a, parse_int(b), parse_int(c), parse_int(d),
+      parse_int(CLI.basis_command_line_get_env("SHY_5")));
+  }
+  if command == "adjust" && count == 7 {
+    return adjust(a, parse_int(b), parse_int(c), parse_int(d),
+      parse_int(CLI.basis_command_line_get_env("SHY_5")),
+      parse_int(CLI.basis_command_line_get_env("SHY_6")),
+      parse_int(CLI.basis_command_line_get_env("SHY_7")));
+  }
+  if command == "help" || command == "" {
+    println("discover PROVIDER QUERY [SERP_HTML]");
+    println("capture HTTPS_URL");
+    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON]]");
+    println("estimate SERIES_JSON HORIZON");
+    println("recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK");
+    println("optimize DEMAND_JSON FLOOR CAP TICK UNIT_COST");
+    println("adjust FORMULA REFERENCE_MINOR WEEKEND PREMIUM_BP FLOOR CAP TICK");
+    return 0;
+  }
+  return shy_error("invalid command or argument count; see ./shylock help");
+}

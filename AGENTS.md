@@ -1,0 +1,145 @@
+# AGENTS.md — Shylock
+
+## Project contract
+
+Shylock is an extensible On1x engine for forecasting and adjusting prices.
+The first market is short-stay vacation rentals. Dragnet is the first plugin.
+It discovers listings using MuLIB ElviScrape and extracts evidence from
+captured pages. Deterministic extraction must remain usable offline and without
+a model. User-authored formulas run through MuLIB Mune under a calculation
+contract. Effectful Lua extensions have a separate lifecycle and permissions.
+
+Use On1x for domain types, orchestration, cohort policy, and pricing rules.
+Use its upstream standard library first. Reuse canonical MuLIB kernels for
+parsing, money, statistics, forecasting, optimization, and Lua. Put ABI
+adaptation in C11. Keep ownership and lifetime explicit at each call. Use
+reviewed Exotract or ExoML bindings as the upstream compiler supports them.
+The current scalar bridge is a trusted C ABI adapter.
+
+## Build and source map
+
+The upstream checkout belongs at `third_party/mulib`. The delivered ZIP was
+tested at MuLIB commit `1f78b6b595c54ae1f214f4cf013d97556881b8c8`. Record the
+actual revision when retesting against a new checkout. The root GNU Makefile
+and `build.sh` are the public build interface. The Makefile bootstraps the
+On1x compiler from upstream or accepts `ON1XC=/path/to/on1xc`. Preserve the
+upstream build helper's single MuLIB implementation translation unit. Bridge
+and plugin sources include declarations only. Keep changes to Shylock local
+unless the task explicitly calls for an upstream patch.
+
+```sh
+./build.sh -j4
+make test
+./shylock help
+```
+
+| Path | Responsibility |
+| --- | --- |
+| `src/main.on1x` | CLI workflow, stdlib argument parsing, and adjustment bounds and tick grid |
+| `src/bridge.c` | Native file, digest, JSON, pricing-kernel, and Mune adapters |
+| `src/shylock.h` | Versioned snapshot-extractor descriptor and borrowed capture contract |
+| `plugins/dragnet/dragnet.c` | ElviScrape discovery, HTTPS adapter, deterministic extraction, and model reply import |
+| `formulas/weekend.lua` | Example `adjust_rate/v1` formula |
+| `tests/test.py` | Executable CLI integration tests using saved pages and a stubbed transport |
+
+The current CLI supports `discover`, `capture`, `extract`, `estimate`,
+`recommend`, and `optimize`. Dragnet is linked at build time. Live HTTPS
+currently uses curl. The launcher hands arguments to the generated executable
+through the environment because the pinned On1x entry point takes no argv.
+
+## Development priorities
+
+### 1. Connect evidence, review, and pricing
+
+Implement a versioned pipeline from immutable capture to candidate, reviewed
+observation, cohort, forecast, and decision. Make the status transitions
+explicit. Keep existing CLI inputs readable during schema evolution. Add an
+offline workflow that moves saved listing quotes through review and into
+`recommend` without a hand-authored price array.
+
+- Keep source URL, capture time, digest, byte range or JSON Pointer, extractor
+  version, rule digest, and any review decision. Never overwrite a published
+  observation when an offer changes. Make replay and retries idempotent.
+- Represent amount as checked integer minor units with currency and scale.
+  Carry listing identity, stay dates, guest count, rate basis, taxes, fees,
+  and qualifiers independently. Preserve unknowns. A nightly rate, stay
+  total, cleaning fee, and “from” price have distinct meanings.
+- Reconcile claims for the same listing and stay by field. Keep disagreeing
+  evidence and surface a review outcome. Treat repeated extraction of the same
+  claim as corroboration. Select comparable reviewed observations explicitly.
+- Acceptance: replay a fixture with competing amounts, duplicates, and a
+  missing currency. Verify stable evidence IDs, explicit unresolved fields,
+  and equivalent cohort output on a repeated run.
+
+### 2. Expand Dragnet extraction and transport
+
+Use `.elvs` programs for provider discovery. Keep listing rules independently
+versioned and scoped to the host and offer container. Extend structured offer
+walking, markup attributes, and evidence-preserving text extraction as fixtures
+justify them. Handle localized separators, symbols, and split markup without
+guessing a currency or time basis. Keep capture distinct from processing so
+extractors can replay the exact input.
+
+The model import currently checks a capture digest and exact quoted bytes and
+marks suggestions for review. Preserve that contract while adding optional
+live model integration through MuLIB's OpenAI-compatible client. Make model
+calls opt-in. Validate output against the original capture and retain model
+and request provenance. Model errors should leave deterministic results
+available with an explicit diagnostic.
+
+Before adding unattended acquisition, make transport behavior cover timeouts,
+response limits, redirect policy, and address validation. Preserve certificate
+and hostname verification. Track provider failures, parse drift, and empty
+results separately where the evidence supports it. Test deterministically with
+saved responses and injected transports. Report live checks separately.
+
+### 3. Evolve formulas, extensions, and the SDK
+
+Keep `adjust_rate/v1` compatible. It receives reference minor units, a weekend
+Boolean, and premium basis points. It returns one bounded integer. On1x
+validates and applies the floor, cap, and tick. Formula execution uses a fresh,
+restricted Mune state with bounded parsing and evaluation. Preserve the
+unadjusted forecast on error. Log the contract, source hash, runtime revision,
+inputs, constraints, and outcome. Keep the formula environment and bindings
+independent of extension privileges.
+
+Add effectful Mune extensions through explicit events and scoped host
+capabilities. Define ownership, error semantics, and state lifetime for each
+event. Add extension loading separately from native SDK loading. Evolve the
+compiled extractor descriptor into a versioned registry before adding
+shared-library loading. Define ABI negotiation and ownership, then test a
+second plugin with the same host.
+
+Acceptance: a formula cannot invoke an extension hook, load a module, or
+retain globals across evaluations. The test suite should continue rejecting
+wrong return types and runaway execution and should verify clean failure on
+plugin API mismatch. The existing restricted state is a runtime boundary for
+trusted formulas. If supporting untrusted authors, add and test process
+isolation separately.
+
+### 4. Improve estimation and decision quality
+
+Use `statsprice` for market references and `histprice` for reviewed,
+equally spaced histories. Version cohort construction, sampling intervals,
+missing-data treatment, and estimator parameters. Backtest using chronological
+cutoffs and report evaluation coverage and error before adding more models.
+Keep market observations, forecasts, formula-adjusted rates, and
+demand-optimized recommendations distinct in types and output.
+
+`optimize` currently takes externally supplied expected demand at each
+candidate rate. Use `priceopt` when the demand input is supported. Derive
+demand from suitable booking or availability evidence and document its
+limitations. Asking-price observations alone describe supply-side quotes.
+Test constraints at tick boundaries and preserve provenance for both demand
+inputs and final recommendation.
+
+## Verify before handing off
+
+Run a clean build and `make test` against the pinned checkout or record the
+replacement revision. Add fixture coverage for each changed behavior. Verify
+CLI exit codes, stable JSON fields, capture replay, and decision audit records.
+For bridge changes, test with the available C compiler diagnostics and check
+allocation and cleanup on parse, limit, and callback failures. Document any
+external dependency or interface migration in `README.md`. When delivering an
+archive, build and test it from a clean extraction with MuLIB placed at the
+documented path.

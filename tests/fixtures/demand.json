@@ -1,0 +1,5 @@
+[
+  {"rate_minor": 15000, "expected_units": 4},
+  {"rate_minor": 18000, "expected_units": 3},
+  {"rate_minor": 20000, "expected_units": 2}
+]
