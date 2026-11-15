@@ -24,9 +24,9 @@ $(BUILD)/compiler/%.o: $(ON1X)/src/%.cpp $(BUILD)/ppx_schema.hpp
 $(BUILD)/on1xc: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
-KERNELS := elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash
-NATIVE := src/bridge.c plugins/dragnet/dragnet.c
-$(BUILD)/shylock: src/main.on1x $(NATIVE) src/shylock.h $(ON1XC) Makefile
+KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash
+NATIVE := plugins/poindexter/store.c src/bridge.c plugins/dragnet/dragnet.c
+$(BUILD)/shylock: src/main.on1x src/poindexter.on1x $(NATIVE) src/shylock.h $(ON1XC) Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
@@ -34,6 +34,7 @@ $(BUILD)/shylock: src/main.on1x $(NATIVE) src/shylock.h $(ON1XC) Makefile
 
 test: $(BUILD)/shylock
 	$(PYTHON) tests/test.py "$(BUILD)/shylock" "$(MULIB)"
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/poindexter.py
 
 clean:
 	rm -rf "$(BUILD)"

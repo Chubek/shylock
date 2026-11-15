@@ -1,0 +1,38 @@
+extern fn shy_store_open(path:string)->i64;
+extern fn shy_store_close()->i64;
+extern fn shy_review_load(path:string)->i64;
+extern fn shy_review_amount(index:i64)->i64;
+extern fn shy_review_field(index:i64,key:string)->string;
+extern fn shy_review_save(index:i64,cohort:string,basis:string,reviewer:string)->i64;
+extern fn shy_store_list(cohort:string)->i64;
+extern fn shy_store_series(cohort:string,currency:string,start:i64,step:i64,count:i64)->i64;
+
+fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string)->i64 {
+  if index<0 || cohort=="" || reviewer=="" { return 2; }
+  if shy_store_open(path)!=1 { return 2; }
+  var result=2;
+  if shy_review_load(capture)==1 {
+    let amount=shy_review_amount(index);
+    let basis=shy_review_field(index,"basis");
+    let qualifier=shy_review_field(index,"qualifier");
+    let currency=shy_review_field(index,"currency");
+    if amount>=0 && basis=="nightly" && qualifier=="unspecified" && text_len(currency)==3 {
+      result=shy_review_save(index,cohort,basis,reviewer);
+    }
+  }
+  shy_store_close();
+  return result;
+}
+fn ledger(path:string,cohort:string)->i64 {
+  if shy_store_open(path)!=1 { return 2; }
+  let result=shy_store_list(cohort);
+  shy_store_close();
+  return result;
+}
+fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64)->i64 {
+  if start<0 || step<1 || count<2 || count>4096 { return 2; }
+  if shy_store_open(path)!=1 { return 2; }
+  let result=shy_store_series(cohort,currency,start,step,count);
+  shy_store_close();
+  return result;
+}

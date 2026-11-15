@@ -174,3 +174,44 @@ allocation and cleanup on parse, limit, and callback failures. Document any
 external dependency or interface migration in `README.md`. When delivering an
 archive, build and test it from a clean extraction with MuLIB placed at the
 documented path.
+
+## Implemented progress in this archive
+
+The repository gitlink resolves to MuLIB
+151528b50b316aeea804ce2aebf66ef90b9e7100. The four proposed money-text,
+webextract-offer, price-quote and price-backtest headers are absent in that
+revision. Inspect the actual checkout before adopting those interfaces.
+
+Poindexter now provides review, ledger and series commands. Domain admission
+lives in src/poindexter.on1x. plugins/poindexter/store.c owns KVDB and JSON
+lifetimes. Read manual/poindexter.md for the exact persistence, conflict,
+currency, gap, and reviewer contracts. The writer lock must cover open,
+read/modify and commit. Preserve idempotent imports and explicit conflict
+results. Keep the existing discovery and pricing CLI tests passing.
+
+The next priorities are richer typed observation context, review revisions,
+cross-capture deduplication, then a spreadsheet data model and TUI/GUI views.
+Carry currency scale explicitly when the ledger admits new parsers. Replace
+trusted extraction-file provenance with verified capture references. Add
+cohort lineage to forecast records. Use incremental snapshots or another
+MuLIB storage kernel if full KVDB snapshots become a measured bottleneck.
+
+Formulas now retain Mune math functions while removing random generators.
+They still use fresh restricted states. Add tests whenever upstream Mune
+changes its global environment. Implement effectful extensions with explicit
+capabilities and lifecycle hooks. Native dynamic plugins, direct LLM calls,
+and browser automation need independent implementations and verification.
+
+Use ./build.sh -j4 and make test. Preserve the GNU Make build. The new
+Poindexter suite covers the offline review-to-recommendation flow. Document
+live-provider checks separately.
+
+## The Use of On1x Metaprogramming Features
+
+The agent is encouraged to use On1x's metaprogramming features. Hygenic macros
+and PPX. Any PPX must be in `src/ppx`. Write the PPX in On1x itself using On1x's
+`ppx` stadnard library.
+
+## The use of On1x Standard Library & Standard PPX
+
+The agent is encouraged to use On1x's standard library and standard PPX library.

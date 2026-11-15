@@ -1,3 +1,4 @@
+import "poindexter.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -42,6 +43,14 @@ fn main() -> i64 {
   let b = CLI.basis_command_line_get_env("SHY_2");
   let c = CLI.basis_command_line_get_env("SHY_3");
   let d = CLI.basis_command_line_get_env("SHY_4");
+  if command == "review" && count==5 {
+    return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
+  }
+  if command == "ledger" && count==2 { return ledger(a,b); }
+  if command == "series" && count==6 {
+    return series(a,b,c,parse_int(d),parse_int(CLI.basis_command_line_get_env("SHY_5")),
+      parse_int(CLI.basis_command_line_get_env("SHY_6")));
+  }
   if command == "discover" && (count == 2 || count == 3) {
     let root = CLI.basis_command_line_get_env("SHY_ROOT");
     let providers = CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
@@ -77,6 +86,9 @@ fn main() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_7")));
   }
   if command == "help" || command == "" {
+    println("review DATABASE CAPTURE_JSON INDEX COHORT REVIEWER");
+    println("ledger DATABASE COHORT");
+    println("series DATABASE COHORT CURRENCY START STEP COUNT");
     println("discover PROVIDER QUERY [SERP_HTML]");
     println("capture HTTPS_URL");
     println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON]]");

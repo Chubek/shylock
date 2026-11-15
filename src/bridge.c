@@ -147,14 +147,28 @@ int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
    before running any user code. Re-start iteration after each removal. */
 static int restrict_formula(mulib_mune_state_t *state)
 {
-    mulib_mune_value_t globals, key, value;
+    mulib_mune_value_t globals, key, value, math;
+    if (mulib_mune_get_global(state, "math", &math) != MULIB_MUNE_OK) return 0;
+    mulib_mune_result_t *roots = mulib_mune_result_create(state);
+    if (!roots || !mulib_mune_result_push(roots, math)) {
+        if (roots) mulib_mune_result_destroy(roots);
+        return 0;
+    }
     if (mulib_mune_get_global(state, "_G", &globals) != MULIB_MUNE_OK ||
         globals.type != MULIB_MUNE_TABLE) return 0;
     /* Keep a host root after removing _G. The VM also roots its globals. */
     for (;;) {
         size_t cursor = 0;
         int found = mulib_mune_table_next(state, globals, &cursor, &key, &value);
-        if (found <= 0) return found == 0;
+        if (found <= 0) {
+            int ok = found == 0;
+            static const char *const forbidden[] = { "random", "randomseed" };
+            for (size_t i = 0; ok && i < 2; ++i)
+                ok = mulib_mune_set_field(state, math, forbidden[i], mulib_mune_nil()) == MULIB_MUNE_OK;
+            if (ok) ok = mulib_mune_set_global(state, "math", math) == MULIB_MUNE_OK;
+            mulib_mune_result_destroy(roots);
+            return ok;
+        }
         if (mulib_mune_raw_set(state, globals, key, mulib_mune_nil()) != MULIB_MUNE_OK)
             return 0;
     }

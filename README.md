@@ -95,3 +95,16 @@ snapshot and appends JSON candidates to a host-owned array. Extend the host
 registry and Makefile to add another compiled extractor. This project does
 not include a dynamic SDK loader, market database, or automatic acceptance of
 offers into a forecasting cohort.
+
+## Poindexter progress
+
+This version adds persistent reviewed observations, idempotent imports,
+conflict detection, ledger output and evenly spaced cohort export. Domain
+admission runs in On1x, and the native bridge uses MuLIB KVDB with writer
+locking. See [the Poindexter manual](manual/poindexter.md) for commands and
+review responsibilities. Formulas can now use deterministic Mune math
+functions, as demonstrated by formulas/rounded.lua.
+
+Build dependency revision for this archive is
+151528b50b316aeea804ce2aebf66ef90b9e7100. The spreadsheet interfaces,
+effectful extension lifecycle and dynamic plugin loader remain future work.
