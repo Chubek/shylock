@@ -1,0 +1,127 @@
+extern fn shy_engine_open(path:string)->i64;
+extern fn shy_engine_close()->i64;
+extern fn shy_engine_policy(policy:string)->i64;
+extern fn shy_engine_candidate(candidate:string)->i64;
+extern fn shy_engine_fold(candidate:i64,training:i64,horizon:i64,validation:i64)->i64;
+extern fn shy_engine_complete(candidate:i64)->i64;
+extern fn shy_engine_compare(a:i64,b:i64,metric:string)->i64;
+extern fn shy_engine_finish(selected:i64,horizon:i64,rank:i64,coverage:i64)->i64;
+extern fn shy_engine_emit()->i64;
+extern fn shy_engine_reference()->i64;
+extern fn shy_engine_field(key:string)->string;
+extern fn shy_engine_number(key:string)->i64;
+
+fn forecast_candidate_valid(i:i64,minimum:i64,window:i64)->bool {
+  let model=shy_document_text("candidates",i,"model");
+  var valid=false;
+  if model=="last" || model=="median" || model=="ar1" || model=="robust-trend" {
+    valid=@fields("closed","candidates",i,"name:string","model:string");
+    if model=="ar1" && minimum<3 { valid=false; }
+    if model=="robust-trend" && window>128 { valid=false; }
+  }
+  if model=="ema" { valid=@fields("closed","candidates",i,"name:string","model:string","alpha_bp:integer"); }
+  if model=="holt" {
+    valid=@fields("closed","candidates",i,"name:string","model:string","alpha_bp:integer","beta_bp:integer","phi_bp:integer") &&
+      shy_document_number("candidates",i,"phi_bp")>=1 && shy_document_number("candidates",i,"phi_bp")<=10000;
+  }
+  if model=="seasonal" {
+    let season=shy_document_number("candidates",i,"season");
+    valid=@fields("closed","candidates",i,"name:string","model:string","alpha_bp:integer","beta_bp:integer","gamma_bp:integer","season:integer") &&
+      shy_document_number("candidates",i,"gamma_bp")<=10000 && season>=2 && season<=512 && minimum>=2*season && window>=2*season;
+  }
+  if model=="kalman" {
+    valid=@fields("closed","candidates",i,"name:string","model:string","process_variance:integer","measurement_variance:integer") &&
+      shy_document_number("candidates",i,"process_variance")+shy_document_number("candidates",i,"measurement_variance")>0;
+  }
+  if model=="ema" || model=="holt" || model=="seasonal" {
+    valid=valid && shy_document_number("candidates",i,"alpha_bp")<=10000;
+  }
+  if model=="holt" || model=="seasonal" { valid=valid && shy_document_number("candidates",i,"beta_bp")<=10000; }
+  let name=shy_document_text("candidates",i,"name");
+  return valid && name!="" && text_len(name)<=64;
+}
+
+fn forecast_policy_valid(count:i64)->bool {
+  if !@fields("closed","",-1,"schema:string","horizon:integer","minimum_training:integer","window:integer",
+    "selection_samples:integer","validation_samples:integer","interval_bp:integer","market_method:string",
+    "market_parameter_ppm:integer","candidates:array") ||
+    shy_document_text("",-1,"schema")!="shylock.forecast-policy/v1" { return false; }
+  let horizon=shy_document_number("",-1,"horizon");
+  let minimum=shy_document_number("",-1,"minimum_training");
+  let window=shy_document_number("",-1,"window");
+  let selection=shy_document_number("",-1,"selection_samples");
+  let validation=shy_document_number("",-1,"validation_samples");
+  let coverage=shy_document_number("",-1,"interval_bp");
+  let models=shy_document_size("",-1,"candidates");
+  if horizon<1 || horizon>365 || minimum<2 || minimum>window || window>1024 ||
+    selection<1 || selection>64 || validation<1 || validation>64 || coverage<1 || coverage>9999 ||
+    count-selection-validation-horizon+1<minimum || models<1 || models>16 { return false; }
+  let market=shy_document_text("",-1,"market_method");
+  let parameter=shy_document_number("",-1,"market_parameter_ppm");
+  if market=="median" || market=="huber" { if parameter!=0 { return false; } }
+  else { if market=="trimmed" || market=="winsorized" { if parameter>=500000 { return false; } }
+  else { if market=="quantile" { if parameter>1000000 { return false; } }
+  else { if market!="kde" { return false; } } } }
+  var i=0;
+  while i<models {
+    if !forecast_candidate_valid(i,minimum,window) { return false; }
+    var j=0;
+    while j<i {
+      if shy_document_text("candidates",i,"name")==shy_document_text("candidates",j,"name") { return false; }
+      j=j+1;
+    }
+    i=i+1;
+  }
+  return true;
+}
+
+# Selection and validation targets are disjoint. Winner selection is frozen
+# before the first validation outcome is evaluated. Every fold is prefix-only.
+fn forecast_run(count:i64)->i64 {
+  if !forecast_policy_valid(count) { return shy_error("invalid forecast policy, model parameters or chronological sample budget"); }
+  if shy_engine_policy(shy_document_json())!=1 { return shy_error("cannot copy forecast policy"); }
+  let horizon=shy_document_number("",-1,"horizon");
+  let selection=shy_document_number("",-1,"selection_samples");
+  let validation=shy_document_number("",-1,"validation_samples");
+  let coverage=shy_document_number("",-1,"interval_bp");
+  let models=shy_document_size("",-1,"candidates");
+  var i=0;
+  var best=-1;
+  while i<models {
+    if shy_engine_candidate(shy_document_json_at("candidates",i,""))!=i { return shy_error("cannot register forecast candidate"); }
+    var target=count-validation-selection;
+    while target<count-validation {
+      if shy_engine_fold(i,target-horizon+1,horizon,0)!=1 { return shy_error("cannot record selection fold"); }
+      target=target+1;
+    }
+    if shy_engine_complete(i)==1 {
+      if best<0 { best=i; }
+      else {
+        let mae=shy_engine_compare(i,best,"mae");
+        if mae<0 || (mae==0 && shy_engine_compare(i,best,"rmse")<0) { best=i; }
+      }
+    }
+    i=i+1;
+  }
+  if best>=0 {
+    var target=count-validation;
+    while target<count {
+      if shy_engine_fold(best,target-horizon+1,horizon,1)!=1 { return shy_error("cannot record validation fold"); }
+      target=target+1;
+    }
+  }
+  let rank=(coverage*validation+9999)/10000;
+  return shy_engine_finish(best,horizon,rank,coverage);
+}
+
+fn forecast(path:string,policy:string)->i64 {
+  let count=shy_engine_open(path);
+  if count<0 { shy_engine_close(); return shy_error("cannot load valid historical series or cohort"); }
+  if shy_document_open(policy)!=1 { shy_engine_close(); return shy_error("cannot read forecast policy JSON"); }
+  let status=forecast_run(count);
+  shy_document_close();
+  let published=shy_engine_emit();
+  shy_engine_close();
+  if published!=0 { return published; }
+  return status;
+}

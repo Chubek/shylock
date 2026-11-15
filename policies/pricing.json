@@ -1,0 +1,16 @@
+{
+  "schema":"shylock.pricing-policy/v1","currency":"EUR","scale":2,"as_of":1793500000,
+  "forecast":{
+    "schema":"shylock.forecast-policy/v1","horizon":1,"minimum_training":3,"window":32,
+    "selection_samples":2,"validation_samples":2,"interval_bp":9000,
+    "market_method":"median","market_parameter_ppm":0,
+    "candidates":[{"name":"last quote","model":"last"},
+      {"name":"damped Holt","model":"holt","alpha_bp":4000,"beta_bp":2000,"phi_bp":9000}]
+  },
+  "formula":{"path":"../formulas/weekend.lua","weekend":true,"premium_bp":1500},
+  "constraints":{"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"unit_cost_minor":2000,
+    "minimum_margin_minor":1000,"previous_minor":18000,"max_change_bp":1000,"objective":"profit"},
+  "decision":"formula",
+  "charges":{"nights":3,"cleaning_minor":7500,"other_fees_minor":1000,"tax_bp":1000,
+    "tax_mode":"inclusive","tax_scope":"accommodation_and_fees"}
+}

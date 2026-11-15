@@ -1,0 +1,13 @@
+{
+  "schema": "shylock.report-template/v1",
+  "title": "Shylock price decision",
+  "blocks": [
+    {"kind":"section","level":1,"text":"Calculation outcome"},
+    {"kind":"paragraph","text":"Status: {{/status}}. Reference (minor units): {{/reference_minor}}. Proposed: {{/proposed_minor}}. Adjusted: {{/adjusted_minor}}."},
+    {"kind":"section","level":1,"text":"Formula and constraints"},
+    {"kind":"paragraph","text":"Contract: {{/contract}}. Weekend: {{/weekend}}. Premium basis points: {{/premium_bp}}. Floor: {{/floor_minor}}. Cap: {{/cap_minor}}. Tick: {{/tick_minor}}."},
+    {"kind":"paragraph","text":"Formula digest: {{/formula_blake3}}. Formula diagnostic: {{/formula_error}}."},
+    {"kind":"section","level":1,"text":"Provenance"},
+    {"kind":"paragraph","text":"Data identifier: {{$data_id}}. Template identifier: {{$template_id}}. These identify content, not authenticated assertions."}
+  ]
+}

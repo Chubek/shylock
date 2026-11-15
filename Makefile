@@ -28,6 +28,9 @@ OBJECTS := $(addprefix $(BUILD)/compiler/,$(addsuffix .o,$(FRONTEND)))
 .PHONY: all test clean FORCE
 all: $(BUILD)/shylock
 
+$(BUILD)/fixed-price.so: sdk/examples/fixed-price.c include/shylock-sdk.h | $(BUILD)
+	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror -fPIC -shared $(CFLAGS) "$<" -o "$@"
+
 $(BUILD)/ppx_schema.hpp: $(ON1X)/grammar/PPX.schema.json $(ON1X)/cmake/ppx_schema.hpp.in tools/bootstrap.py
 	$(PYTHON) tools/bootstrap.py "$(ON1X)" "$@"
 
@@ -38,19 +41,29 @@ $(BUILD)/compiler/%.o: $(ON1X)/src/%.cpp $(BUILD)/ppx_schema.hpp
 $(BUILD)/on1xc: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
-KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw
+KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex
 VM_NATIVE := src/record.c src/mune_vm.c src/sandbox.c src/sandbox_os.c
-NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c $(VM_NATIVE)
-HEADERS := src/shylock.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
+NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/document.c src/engine.c src/context.c src/latex.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c $(VM_NATIVE)
+HEADERS := src/shylock.h include/shylock-sdk.h plugins/dragnet/dragnet.h plugins/dragnet/workflow.h src/document.h src/engine.h src/latex.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
 $(BUILD)/native-config.json: FORCE tools/native_config.py
 	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(GUI_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)"
 
-$(BUILD)/shylock: src/main.on1x src/poindexter.on1x src/worksheet.on1x $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile | $(BUILD)/shylock-worker
+PPX_LIB := $(wildcard $(ON1X)/stdlib/ppx/*.on1x) $(ON1X)/stdlib/sexpr/sexpr.on1x $(ON1X)/stdlib/visitor/visitor.on1x
+PPX_TIMEOUT_MS ?= 30000
+$(BUILD)/ppx-fields: src/ppx/fields.on1x $(PPX_LIB) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
+	  --stdlib "$(ON1X)/stdlib" --cflag=-O2 $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
+
+$(BUILD)/shylock: $(wildcard src/*.on1x) $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/ppx-fields $(BUILD)/native-config.json Makefile | $(BUILD)/shylock-worker
+	ON1X_PPX_SCHEMA="$(abspath $(ON1X)/grammar/PPX.schema.json)" \
+	  $(PYTHON) "$(ON1X)/tools/on1x-build.py" src/main.on1x --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" \
+	  --ppx fields "$(abspath $(BUILD)/ppx-fields)" \
+	  --ppx-timeout-ms "$(PPX_TIMEOUT_MS)" \
 	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) \
 	  $(foreach flag,$(GUI_FLAGS),--cflag=$(flag)) \
+	  --cflag=-ldl \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
 	  $(foreach file,$(NATIVE),--extra-c $(file)) -o "$@"
 
@@ -72,6 +85,7 @@ $(BUILD)/native-tests: tests/native.on1x tests/native.c tests/fixtures/fresh.lua
 	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) \
 	  $(foreach flag,$(GUI_FLAGS),--cflag=$(flag)) \
+	  --cflag=-ldl \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
 	  $(foreach file,$(NATIVE) tests/native.c,--extra-c $(file)) -o "$@"
 
@@ -79,14 +93,39 @@ $(BUILD)/sandbox-probes: tests/sandbox_probe.c src/sandbox_os.c src/sandbox.h sr
 	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WORKER_CFLAGS) -I"$(MULIB)/include" \
 	  tests/sandbox_probe.c src/sandbox_os.c -o "$@"
 
-test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes
+$(BUILD)/metaprogramming-tests: tests/metaprogramming.on1x src/demand_macros.on1x $(BUILD)/ppx-fields $(ON1XC) Makefile
+	ON1X_PPX_SCHEMA="$(abspath $(ON1X)/grammar/PPX.schema.json)" \
+	  $(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
+	  --stdlib "$(ON1X)/stdlib" --ppx fields "$(abspath $(BUILD)/ppx-fields)" \
+	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
+
+DRAGNET_NATIVE := plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c src/registry.c src/evidence.c
+$(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c $(DRAGNET_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
+	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
+	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" --mulib json --mulib cryptohash --mulib latex \
+	  --mulib money --mulib histprice --mulib statsprice --mulib priceopt \
+	  --mulib elvi-scrape --mulib html-jsonld --mulib html-tokenizer --cflag=-ldl \
+	  $(foreach file,$(DRAGNET_NATIVE),--extra-c $(file)) \
+	  --extra-c tests/document_alloc.c --extra-c src/document.c --extra-c src/engine.c --extra-c src/context.c --extra-c src/series.c --extra-c src/latex.c --extra-c src/record.c \
+	  --cflag=-Wl,--wrap=malloc --cflag=-Wl,--wrap=calloc --cflag=-Wl,--wrap=realloc \
+	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
+
+test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/metaprogramming-tests $(BUILD)/document-allocation-tests
 	$(PYTHON) tests/test.py "$(BUILD)/shylock" "$(MULIB)"
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/poindexter.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/pipeline.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/demand.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/engine.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" CC="$(CC)" SDK_TEST_CFLAGS="$(CFLAGS)" $(PYTHON) tests/sdk.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/dragnet.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/extensions.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/calculation.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/reports.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/worksheet.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/sandbox.py
 	SDL_VIDEODRIVER=dummy "$(BUILD)/native-tests"
+	$(PYTHON) tests/metaprogramming.py "$(ON1XC)" "$(BUILD)/ppx-fields" "$(ON1X)" "$(BUILD)/metaprogramming-tests"
+	$(PYTHON) tests/document_alloc.py "$(BUILD)/document-allocation-tests"
 
 clean:
 	rm -rf "$(BUILD)"

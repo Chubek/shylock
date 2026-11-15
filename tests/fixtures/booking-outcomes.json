@@ -1,0 +1,16 @@
+{
+  "schema": "shylock.booking-outcomes/v1",
+  "cohort": "cottages/2-guests",
+  "currency": "EUR",
+  "scale": 2,
+  "basis": "nightly",
+  "context": {"guests": 2, "taxes": "included", "fees": "excluded"},
+  "rows": [
+    {"opportunity_id":"a1","listing_id":"cottage:a","stay_date":"2026-10-25","rate_minor":10000,"outcome":"booked","finalized_at":1793491200,"source_ref":"host-export:a1"},
+    {"opportunity_id":"b1","listing_id":"cottage:b","stay_date":"2026-10-25","rate_minor":10000,"outcome":"booked","finalized_at":1793491200,"source_ref":"host-export:b1"},
+    {"opportunity_id":"c1","listing_id":"cottage:c","stay_date":"2026-10-25","rate_minor":10000,"outcome":"not_booked","finalized_at":1793491200,"source_ref":"host-export:c1"},
+    {"opportunity_id":"a2","listing_id":"cottage:a","stay_date":"2026-10-26","rate_minor":20000,"outcome":"booked","finalized_at":1793491200,"source_ref":"host-export:a2"},
+    {"opportunity_id":"b2","listing_id":"cottage:b","stay_date":"2026-10-26","rate_minor":20000,"outcome":"not_booked","finalized_at":1793491200,"source_ref":"host-export:b2"},
+    {"opportunity_id":"c2","listing_id":"cottage:c","stay_date":"2026-10-26","rate_minor":20000,"outcome":"not_booked","finalized_at":1793491200,"source_ref":"host-export:c2"}
+  ]
+}

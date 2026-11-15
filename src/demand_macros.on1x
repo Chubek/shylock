@@ -1,0 +1,15 @@
+# Hygienic temporary: conditions evaluate once, even if the caller binds valid.
+macro demand_require {
+  rule ($condition: Expression, $message: Expression) => block {
+    let valid=$condition;
+    if !valid { return (shy_error($message),""); }
+  };
+}
+
+macro demand_member {
+  rule ($out: Identifier, $key: Expression, $value: Expression) => block {
+    let value=$value;
+    buffer_append($out,shy_json_quote($key)); buffer_byte($out,58);
+    buffer_append($out,shy_json_quote(value)); buffer_byte($out,44);
+  };
+}

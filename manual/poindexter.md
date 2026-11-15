@@ -193,14 +193,19 @@ someone directly replacing local database files.
 
 ## Estimation and remaining scope
 
+For configurable MuLIB estimators, disjoint selection/holdout evaluation,
+checked stay quotes and unified guarded decisions, see [pricing policies](pricing.md).
+The existing `estimate`, `recommend` and `backtest` v1 contracts below are retained.
+
 `backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES` uses expanding training
 prefixes and chronological cutoffs. Each forecast uses only samples preceding
 its target; failed forecasts reduce reported coverage. Outputs include MAE,
 RMSE, bias and each fold's training size/target/outcome. The estimator remains
 MuLIB damped Holt with alpha 0.4, beta 0.2 and phi 0.9, versioned as
 `damped-holt/v1`. Asking prices describe supply, not booking demand. `optimize`
-continues to require externally supplied demand estimates and audits its input
-digest and floor/cap/tick/cost constraints.
+accepts externally supplied demand estimates or replayed artifacts from the
+[booking-outcome demand workflow](demand.md), and audits its input digest and
+floor/cap/tick/cost constraints. Asking-price cohorts never become booking demand.
 
 Mune formulas retain deterministic math but not random, file, process, module,
 debug or extension capabilities. Native tests check two formula evaluations in

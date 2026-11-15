@@ -13,6 +13,7 @@ native code or observation approval.
 SHY_EXTENSIONS=extensions/example.json ./shylock recommend cohort.json 1 \
   formulas/weekend.lua 1 1000 10000 30000 100
 ./shylock extension extensions/example.json decision.created decision.json
+./shylock extension-replay extensions/monitor.json extensions/events/example.json
 ```
 
 With no `SHY_EXTENSIONS`, ordinary commands do not load or execute extensions.
@@ -138,6 +139,8 @@ Supported subscribed events:
 - `optimization.created`
 - `worksheet.opened`
 - `worksheet.saved`
+- `report.created` (successful [LaTeX report](reports.md) metadata, not its body)
+- `demand.created` (completed versioned booking-outcome demand artifacts)
 
 `on_load` runs first. Subscribed events run in order; `recommend` sends its
 forecast before its decision. CLI output events and review events are deferred
@@ -194,3 +197,53 @@ restrictions while extensions are enabled.
 The sandbox suite repeats lifecycle and worksheet tests through workers and
 tests kernel-enforced restrictions, failed startup, malformed IPC, crashes,
 deadlines, rollback and a worker attempting to forge its own permissions.
+
+## Saved-event replay and monitor example
+
+`extension-replay CONFIG_JSON EVENTS_JSON` delivers a saved batch in one lifecycle.
+It emits `shylock.extension-replay/v1` with the unchanged batch, phase audits and
+status; configuration/hook failures return 2. Events are caller assertions, not
+verified imports or a way to approve observations. `SHY_EXTENSIONS` is not also
+loaded for this explicit command.
+
+```json
+{
+  "schema": "shylock.extension-events/v1",
+  "events": [
+    {"event": "decision.created", "payload": {"status": "adjusted", "adjusted_minor": 20700}},
+    {"event": "decision.created", "payload": {"status": "formula_error", "adjusted_minor": null}}
+  ]
+}
+```
+
+On1x (`src/extensions.on1x`) checks the complete closed batch/envelopes and known
+events before loading any extension, including `on_load`. Batches contain 1..32
+object payloads, at most 1 MiB each, with serialized batches at most 2 MiB.
+Retained audit records are additionally bounded to 8 MiB. Invalid fields, events,
+types or sizes fail without lifecycle effects.
+
+After validation: `on_load`, ordered subscribed events, then `on_unload`. Each
+instance retains its own Mune state between batch deliveries. Each hook still
+has a separate locked KV transaction: a later failure does not roll back earlier
+commits. Failed instances receive no further hooks; other healthy instances
+continue. A replay is not one atomic transaction.
+
+`extensions/monitor/monitor.lua` demonstrates explicit capabilities, durable
+versioned event checkpoints, formula-error counters and session-local delivery
+counts. `extensions/events/example.json` intentionally repeats the first decision:
+it counts once in storage but twice as a delivery. `extensions/monitor.json`
+uses `extensions/monitor-state.db` relative to that config (ignored by git).
+Choose your own trusted store rather than sharing it with production records.
+
+```sh
+./shylock extension-replay extensions/monitor.json extensions/events/example.json
+SHY_SANDBOX=process ./shylock extension-replay extensions/monitor.json extensions/events/example.json
+SHY_EXTENSIONS=extensions/monitor.json ./shylock adjust \
+  formulas/weekend.lua 18000 1 1500 10000 30000 100
+```
+
+Stable IDs prevent the example recounting checkpointed events on replay. These
+counters are audit examples, not billing or authenticated accounting. Replay and
+report completion grant no `host.print`, TeX, file, network, formula-evaluation
+or domain-mutation capability. `tests/calculation.py` checks replay in-process
+and in workers, including state retention, duplicate IDs and pre-load validation.

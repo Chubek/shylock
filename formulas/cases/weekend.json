@@ -1,0 +1,11 @@
+{
+  "schema": "shylock.formula-cases/v1",
+  "cases": [
+    {"name":"weekend premium","reference_minor":18000,"weekend":true,"premium_bp":1500,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":20700},
+    {"name":"weekday unchanged","reference_minor":18000,"weekend":false,"premium_bp":1500,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":18000},
+    {"name":"cap is authoritative","reference_minor":18000,"weekend":true,"premium_bp":1500,"floor_minor":10000,"cap_minor":20000,"tick_minor":100,"expected_minor":20000},
+    {"name":"tick ties round upward","reference_minor":18050,"weekend":false,"premium_bp":0,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":18100},
+    {"name":"cap below rounded tick","reference_minor":18050,"weekend":false,"premium_bp":0,"floor_minor":10000,"cap_minor":18070,"tick_minor":100,"expected_minor":18000},
+    {"name":"zero remains an integer","reference_minor":0,"weekend":true,"premium_bp":10000,"floor_minor":0,"cap_minor":30000,"tick_minor":100,"expected_minor":0}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "schema": "shylock.extension/v1",
+  "name": "decision-monitor",
+  "script": "monitor.lua",
+  "capabilities": ["log", "kv.read", "kv.write"],
+  "events": ["decision.created", "report.created", "demand.created"]
+}

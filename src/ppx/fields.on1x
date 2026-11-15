@@ -1,0 +1,67 @@
+import std.ppx.ppx as P;
+import std.sexpr.sexpr as SX;
+import std.visitor.visitor as V;
+
+# @fields("closed", section, index, "key:type", ...) checks a closed JSON
+# object through the scalar document adapter. Introduced names are fresh and
+# section/index evaluate once. This is syntax generation, not type derivation.
+fn fields_binary(op:string,a:sexpr,b:sexpr,at:sexpr)->sexpr {
+  return P.ppx_node("Binary",P.ppx_list4(sx_symbol(op),a,b,at));
+}
+
+fn fields_string(value:string,at:sexpr)->sexpr {
+  return P.ppx_node("StringLiteral",P.ppx_list2(sx_string(value),at));
+}
+
+fn fields_transform(tree:sexpr,label:string)->sexpr {
+  let (section,serial)=P.ppx_fresh(tree,0);
+  let (index,next)=P.ppx_fresh(tree,serial);
+  return V.visitor_rewrite(tree,fn(node:sexpr,path:sexpr)->sexpr {
+    if V.visitor_tag(node)!="ExtensionExpr" || sx_text(SX.sexpr_nth(node,1))!=label { return node; }
+    let args=SX.sexpr_nth(node,3);
+    let at=SX.sexpr_nth(node,4);
+    let count=SX.sexpr_size(args);
+    if sx_text(SX.sexpr_nth(node,2))!="closed" || count<3 || count>34 {
+      tool_fail("fields: expected closed(section,index,\"key:type\",...); 1..32 fields");
+    }
+    let s=P.ppx_ident(section,at);
+    let i=P.ppx_ident(index,at);
+    let empty=fields_string("",at);
+    var check=fields_binary("==",P.ppx_call("shy_document_has",
+      P.ppx_list4(s,i,empty,fields_string("object",at)),at),P.ppx_integer("1",at),at);
+    check=fields_binary("&&",check,fields_binary("==",P.ppx_call("shy_document_size",
+      P.ppx_list3(s,i,empty),at),P.ppx_integer(SX.sexpr_nat(count-2),at),at),at);
+    var rest=sx_tail(sx_tail(args));
+    var seen=sx_nil();
+    while sx_kind(rest)==3 {
+      let descriptor=sx_head(rest);
+      if V.visitor_tag(descriptor)!="StringLiteral" { tool_fail("fields: descriptors must be string literals"); }
+      let text=sx_text(SX.sexpr_nth(descriptor,1));
+      var colon=0;
+      while colon<text_len(text) && text_byte(text,colon)!=58 { colon=colon+1; }
+      if colon==0 || colon==text_len(text) { tool_fail("fields: expected key:type"); }
+      let key=text_slice(text,0,colon);
+      let kind=text_slice(text,colon+1,text_len(text));
+      if kind!="string" && kind!="integer" && kind!="array" && kind!="object" && kind!="boolean" && kind!="null" {
+        tool_fail("fields: unsupported field type");
+      }
+      var names=seen;
+      while sx_kind(names)==3 {
+        if sx_text(sx_head(names))==key { tool_fail("fields: duplicate field"); }
+        names=sx_tail(names);
+      }
+      seen=sx_cons(sx_string(key),seen);
+      let has=P.ppx_call("shy_document_has",P.ppx_list4(s,i,fields_string(key,at),fields_string(kind,at)),at);
+      check=fields_binary("&&",check,fields_binary("==",has,P.ppx_integer("1",at),at),at);
+      rest=sx_tail(rest);
+    }
+    let params=P.ppx_list2(
+      P.ppx_node("Parameter",P.ppx_list3(sx_string(section),P.ppx_node("StringType",sx_nil()),at)),
+      P.ppx_node("Parameter",P.ppx_list3(sx_string(index),P.ppx_node("I64Type",sx_nil()),at)));
+    let body=P.ppx_node("Block",P.ppx_list2(P.ppx_list1(P.ppx_node("Return",P.ppx_list2(check,at))),at));
+    let lambda=P.ppx_node("Lambda",P.ppx_list4(params,P.ppx_node("BoolType",sx_nil()),body,at));
+    return P.ppx_node("Call",P.ppx_list3(lambda,P.ppx_list2(sx_head(args),SX.sexpr_nth(args,1)),at));
+  });
+}
+
+fn main() { P.ppx_serve(P.ppx_schema_env(),fields_transform); }

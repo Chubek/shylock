@@ -1,0 +1,101 @@
+extern fn shy_dragnet_prepare(provider:string,query:string,capture:string,root:string,limit:i64)->i64;
+extern fn shy_dragnet_count()->i64;
+extern fn shy_dragnet_publish(status:string,diagnostic:string)->i64;
+extern fn shy_dragnet_close()->i64;
+extern fn shy_dragnet_snapshot(url:string,timestamp:i64,saved:string)->i64;
+extern fn shy_dragnet_extract_snapshot(path:string,rules:string,model:string,plugin:string)->i64;
+extern fn shy_dragnet_replay(path:string)->i64;
+extern fn shy_extract_plugin(plugin:string,path:string,url:string,timestamp:i64,rules:string,model:string)->i64;
+extern fn shy_dragnet_batch_begin(job:string)->i64;
+extern fn shy_dragnet_batch_error(provider:string)->i64;
+extern fn shy_dragnet_batch_finish(status:string)->i64;
+extern fn shy_dragnet_batch_close()->i64;
+
+# Provider policy and outcome classification live in On1x. Zero matches alone
+# cannot distinguish a genuine empty SERP, bot challenge, or provider markup drift.
+fn dragnet_finish(code:i64)->i64 {
+  var status="results";
+  var diagnostic="";
+  var result=0;
+  if code<0 || code==1 { shy_dragnet_close(); return shy_error("cannot compile requested .elvs provider or construct URL"); }
+  if code==2 { status="transport_error"; diagnostic="capture read, DNS policy, deadline or HTTPS transport failed"; result=2; }
+  if code==3 { status="http_error"; diagnostic="provider did not return 200; redirects and retries are disabled"; result=2; }
+  if code==4 { status="response_error"; diagnostic="expected bounded nonempty UTF-8 HTML"; result=2; }
+  if code==5 { status="parse_error"; diagnostic="ElviScrape could not process response"; result=2; }
+  if code==0 && shy_dragnet_count()==0 {
+    status="no_parsed_hits";
+    diagnostic="empty results, challenge or parse drift are not distinguishable from this response";
+  }
+  let published=shy_dragnet_publish(status,diagnostic);
+  shy_dragnet_close();
+  if published!=0 { return published; }
+  return result;
+}
+fn dragnet_discover(provider:string,query:string,capture:string,root:string,limit:i64)->i64 {
+  if provider=="" || query=="" || text_len(query)>2048 || limit<1 || limit>64 {
+    return shy_error("provider/query and result limit 1..64 required");
+  }
+  return dragnet_finish(shy_dragnet_prepare(provider,query,capture,root,limit));
+}
+fn dragnet_replay(path:string)->i64 {
+  if shy_dragnet_replay(path)!=0 { shy_dragnet_close(); return shy_error("discovery provenance/replay mismatch"); }
+  return dragnet_finish(0);
+}
+fn dragnet_snapshot(url:string,time:i64,saved:string)->i64 {
+  if time<0 || time>253402300799 { return shy_error("valid capture timestamp required"); }
+  return shy_dragnet_snapshot(url,time,saved);
+}
+
+# Admit the complete job before any acquisition. Network access is explicit,
+# provider failures are independent, and no failed source hides another result.
+fn dragnet_job_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","query:string","limit:integer","allow_network:boolean","providers:array") ||
+    shy_document_text("",-1,"schema")!="shylock.discovery-job/v1" { return false; }
+  let count=shy_document_size("",-1,"providers");
+  let limit=shy_document_number("",-1,"limit");
+  let query=shy_document_text("",-1,"query");
+  if count<1 || count>8 || limit<1 || limit>64 || query=="" || text_len(query)>2048 { return false; }
+  var i=0;
+  while i<count {
+    if !@fields("closed","providers",i,"name:string","capture:string") { return false; }
+    let name=shy_document_text("providers",i,"name");
+    if name=="" || text_len(name)>64 || text_len(shy_document_text("providers",i,"capture"))>4096 ||
+      (shy_document_text("providers",i,"capture")=="" && shy_document_boolean("",-1,"allow_network")!=1) { return false; }
+    var k=0;
+    while k<text_len(name) {
+      let c=text_byte(name,k);
+      if !((c>=97 && c<=122) || (c>=48 && c<=57) || c==95 || c==45) { return false; }
+      k=k+1;
+    }
+    var j=0;
+    while j<i { if name==shy_document_text("providers",j,"name") { return false; } j=j+1; }
+    i=i+1;
+  }
+  return true;
+}
+fn dragnet_many(path:string,root:string)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read discovery job"); }
+  if !dragnet_job_valid() { shy_document_close(); return shy_error("invalid discovery job or network acquisition not authorized"); }
+  if shy_dragnet_batch_begin(shy_document_json())!=0 { shy_document_close(); return shy_error("cannot allocate discovery batch"); }
+  let count=shy_document_size("",-1,"providers");
+  let query=text_concat("",shy_document_text("",-1,"query"));
+  let limit=shy_document_number("",-1,"limit");
+  var result=0;
+  var i=0;
+  while i<count {
+    let name=text_concat("",shy_document_text("providers",i,"name"));
+    var capture=text_concat("",shy_document_text("providers",i,"capture"));
+    if capture!="" { capture=Path.basis_path_join(Path.basis_path_dir(path),capture); }
+    let code=shy_dragnet_prepare(name,query,capture,root,limit);
+    if code<0 || code==1 { shy_dragnet_batch_error(name); shy_dragnet_close(); result=2; }
+    else { if dragnet_finish(code)!=0 { result=2; } }
+    i=i+1;
+  }
+  shy_document_close();
+  var status="complete";
+  if result!=0 { status="partial_failure"; }
+  let published=shy_dragnet_batch_finish(status);
+  shy_dragnet_batch_close();
+  if published!=0 { return published; }
+  return result;
+}

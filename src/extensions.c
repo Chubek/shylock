@@ -27,12 +27,13 @@ typedef struct {
     size_t writes, calls;
 } extension;
 static extension extensions[MAX_EXTENSIONS];
-static size_t extension_count, queued_bytes;
+static size_t extension_count, queued_bytes, reports_bytes;
 static mulib_json_t *reports, *queue;
 static int explicit_command, failures;
 
 static const char *const event_names[] = { "capture.extracted", "observation.reviewed", "cohort.created",
-    "forecast.created", "decision.created", "optimization.created", "worksheet.opened", "worksheet.saved" };
+    "forecast.created", "decision.created", "optimization.created", "worksheet.opened", "worksheet.saved",
+    "report.created", "demand.created" };
 static int event_valid(const char *event)
 {
     for (size_t i = 0; i < sizeof event_names / sizeof *event_names; ++i)
@@ -84,7 +85,13 @@ static int capabilities(const mulib_json_t *array, unsigned *out)
 
 static int report(mulib_json_t *record)
 {
-    if (explicit_command) return shy_push(reports, record);
+    if (explicit_command) {
+        char *text = record ? mulib_json_stringify(record, 0) : NULL;
+        size_t n = text ? strlen(text) : QUEUE_LIMIT+1; free(text);
+        if (n > QUEUE_LIMIT || reports_bytes > QUEUE_LIMIT-n) { mulib_json_destroy(record); return 0; }
+        if (!shy_push(reports, record)) return 0;
+        reports_bytes += n; return 1;
+    }
     char *text = record ? mulib_json_stringify(record, 0) : NULL;
     mulib_json_destroy(record);
     if (!text) return 0;
@@ -284,7 +291,7 @@ static int load_extension(const char *configuration, const mulib_json_t *entry)
         capabilities(mulib_json_get(manifest, "capabilities"), &requested) && !(requested & ~grants);
     for (size_t i = 0; ok && i < extension_count; ++i) if (extensions[i].name && !strcmp(extensions[i].name, name)) ok = 0;
     const mulib_json_t *events = mulib_json_get(manifest, "events");
-    ok = ok && mulib_json_typeof(events) == MULIB_JSON_ARRAY && mulib_json_size(events) <= 8;
+    ok = ok && mulib_json_typeof(events) == MULIB_JSON_ARRAY && mulib_json_size(events) <= sizeof event_names/sizeof *event_names;
     for (size_t i = 0; ok && i < mulib_json_size(events); ++i) {
         size_t n; const char *event = mulib_json_text(mulib_json_at(events, i), &n);
         ok = event && strlen(event) == n && event_valid(event);
@@ -366,6 +373,48 @@ int shy_extensions_enqueue(const char *event, const mulib_json_t *payload)
     queued_bytes += n; return 1;
 }
 
+int64_t shy_extensions_enqueue_json(const char *event, const char *text)
+{
+    if (!extension_count) return 1;
+    size_t n = strlen(text);
+    mulib_json_t *payload = n <= EVENT_LIMIT ? mulib_json_parse(text, n, NULL) : NULL;
+    int ok = payload && shy_extensions_enqueue(event, payload);
+    if (!payload) diagnostic(NULL, "host", event, "invalid extension JSON event; core result preserved");
+    mulib_json_destroy(payload); return ok;
+}
+
+int64_t shy_extension_replay_begin(const char *configuration)
+{
+    explicit_command = 1; reports_bytes = 0; reports = mulib_json_new(MULIB_JSON_ARRAY);
+    if (!reports) { ++failures; return 2; }
+    return shy_extensions_begin(configuration);
+}
+
+int64_t shy_extension_replay_send(const char *event, const char *text)
+{
+    size_t n = strlen(text);
+    mulib_json_t *payload = n <= EVENT_LIMIT ? mulib_json_parse(text, n, NULL) : NULL;
+    int ok = payload && event_valid(event);
+    if (ok) ok = shy_extensions_event(event, payload);
+    else diagnostic(NULL, "host", event, "invalid replay event or payload");
+    mulib_json_destroy(payload); return ok ? 0 : 2;
+}
+
+int64_t shy_extension_replay_end(const char *batch)
+{
+    int64_t status = shy_extensions_end(); explicit_command = 0;
+    mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
+    mulib_json_t *source = mulib_json_parse(batch, strlen(batch), NULL);
+    mulib_json_t *audit = reports; reports = NULL; reports_bytes = 0;
+    int ok = shy_add(out, "schema", mulib_json_string("shylock.extension-replay/v1")) &&
+        shy_add(out, "status", mulib_json_string(status ? "extension_error" : "ok"));
+    if (ok) { ok = shy_add(out, "batch", source); source = NULL; }
+    if (ok) { ok = shy_add(out, "audit", audit); audit = NULL; }
+    mulib_json_destroy(source); mulib_json_destroy(audit);
+    if (!ok) { mulib_json_destroy(out); return 2; }
+    return shy_emit(out) ? 2 : status;
+}
+
 int64_t shy_extensions_drain(void)
 {
     /* Hooks run only after Poindexter releases its lock, including worker RPC. */
@@ -395,7 +444,7 @@ int64_t shy_extension_command(const char *configuration, const char *event, cons
     if (!event_valid(event)) return shy_error("unknown extension event");
     mulib_json_t *payload = read_json(payload_path, EVENT_LIMIT);
     if (!payload) return shy_error("cannot read bounded extension event JSON");
-    explicit_command = 1; reports = mulib_json_new(MULIB_JSON_ARRAY);
+    explicit_command = 1; reports_bytes = 0; reports = mulib_json_new(MULIB_JSON_ARRAY);
     (void)shy_extensions_begin(configuration); (void)shy_extensions_event(event, payload);
     int64_t status = shy_extensions_end(); explicit_command = 0;
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);

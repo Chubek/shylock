@@ -1,0 +1,34 @@
+import "../src/demand_macros.on1x";
+
+fn shy_error(message:string)->i64 { println(message); return 2; }
+fn shy_json_quote(text:string)->string { return text_concat(text_concat("\"",text),"\""); }
+fn shy_document_has(section:string,index:i64,key:string,kind:string)->i64 { return 1; }
+fn shy_document_size(section:string,index:i64,key:string)->i64 { return 1; }
+fn section_once()->string { println("section"); return "rows"; }
+fn index_once()->i64 { println("index"); return 0; }
+fn condition_once()->bool { println("condition"); return true; }
+fn value_once()->string { println("value"); return "inner"; }
+
+fn hygiene()->(i64,string) {
+  let valid=42;
+  let value="outer";
+  let out=buffer_new();
+  demand_require!(condition_once(),"should not fail");
+  demand_member!(out,"key",value_once());
+  assert(valid==42 && value=="outer");
+  assert(buffer_text(out)=="\"key\":\"inner\",");
+  demand_require!(false,"expected failure");
+  return (0,"");
+}
+
+fn main()->i64 {
+  let on1x_ppx_1=99;
+  let on1x_ppx_2=100;
+  assert(@fields("closed",section_once(),index_once(),"field:string"));
+  assert(@fields("closed","",-1,"flag:boolean"));
+  assert(@fields("closed","",-1,"expected:null"));
+  assert(on1x_ppx_1==99 && on1x_ppx_2==100);
+  let (status,text)=hygiene();
+  assert(status==2 && text=="");
+  return 0;
+}

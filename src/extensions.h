@@ -11,4 +11,9 @@ int shy_extensions_enqueue(const char *event, const mulib_json_t *payload);
 int64_t shy_extensions_drain(void);
 int64_t shy_extensions_end(void);
 int64_t shy_extension_command(const char *configuration, const char *event, const char *payload_path);
+/* Text is borrowed only for the call; parsing/copying retains no caller bytes. */
+int64_t shy_extensions_enqueue_json(const char *event, const char *payload);
+int64_t shy_extension_replay_begin(const char *configuration);
+int64_t shy_extension_replay_send(const char *event, const char *payload);
+int64_t shy_extension_replay_end(const char *batch);
 #endif

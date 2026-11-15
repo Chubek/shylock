@@ -1,0 +1,11 @@
+{
+  "schema":"shylock.report-template/v1","title":"Shylock evaluated forecast",
+  "blocks":[
+    {"kind":"section","level":1,"text":"Selected model"},
+    {"kind":"paragraph","text":"Estimator: {{/selected_estimator/name}}. Horizon: {{/horizon}}. Forecast: {{/forecast_minor}} minor units. Historical market reference: {{/market_reference_minor}}."},
+    {"kind":"paragraph","text":"Validation samples: {{/validation/evaluated}}. MAE: {{/validation/mae_minor}}. RMSE: {{/validation/rmse_minor}}. Bias: {{/validation/bias_minor}}."},
+    {"kind":"section","level":1,"text":"Descriptive uncertainty"},
+    {"kind":"paragraph","text":"Holdout absolute-error band: {{/interval/lower_minor}} to {{/interval/upper_minor}} minor units. These are empirical error quantiles, not guaranteed prediction coverage or booking demand."},
+    {"kind":"paragraph","text":"Forecast identifier: {{/forecast_id}}. Source: {{$data_id}}."}
+  ]
+}

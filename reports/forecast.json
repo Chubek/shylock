@@ -1,0 +1,12 @@
+{
+  "schema": "shylock.report-template/v1",
+  "title": "Shylock asking-price forecast",
+  "blocks": [
+    {"kind":"section","level":1,"text":"Forecast"},
+    {"kind":"paragraph","text":"Estimator: {{/estimator/name}}. Horizon: {{/horizon}} sample intervals. Samples: {{/samples}}. Forecast in minor units: {{/forecast_minor}}."},
+    {"kind":"paragraph","text":"Market reference in minor units: {{/reference_minor}}. Series digest: {{/series_blake3}}."},
+    {"kind":"section","level":1,"text":"Limitations"},
+    {"kind":"paragraph","text":"Asking prices describe supply-side quotes, not booking demand or guaranteed achievable prices. Currency and scale must be supplied by the source cohort; they are not inferred by this report."},
+    {"kind":"paragraph","text":"Data identifier: {{$data_id}}. Template identifier: {{$template_id}}."}
+  ]
+}

@@ -16,9 +16,10 @@ int64_t shy_emit(mulib_json_t *record)
     const char *schema = shy_text(record, "schema"), *event = NULL;
     if (!strcmp(schema, "shylock.capture/v2")) event = "capture.extracted";
     else if (!strcmp(schema, "shylock.cohort/v1")) event = "cohort.created";
-    else if (!strcmp(schema, "shylock.forecast/v1")) event = "forecast.created";
-    else if (!strcmp(schema, "shylock.decision/v1")) event = "decision.created";
-    else if (!strcmp(schema, "shylock.optimization/v1")) event = "optimization.created";
+    else if (!strcmp(schema, "shylock.forecast/v1") || !strcmp(schema, "shylock.forecast/v2")) event = "forecast.created";
+    else if (!strcmp(schema, "shylock.decision/v1") || !strcmp(schema, "shylock.pricing-decision/v1")) event = "decision.created";
+    else if (!strcmp(schema, "shylock.optimization/v1") || !strcmp(schema, "shylock.optimization/v2")) event = "optimization.created";
+    else if (!strcmp(schema, "shylock.demand/v1")) event = "demand.created";
     if (event) (void)shy_extensions_enqueue(event, record);
     char *text = record ? mulib_json_stringify(record, 0) : NULL;
     mulib_json_destroy(record);
@@ -28,7 +29,7 @@ int64_t shy_emit(mulib_json_t *record)
     return ok ? 0 : 2;
 }
 
-int64_t shy_extract(const char *path, const char *url, int64_t timestamp, const char *rules,
+int64_t shy_extract_plugin(const char *plugin, const char *path, const char *url, int64_t timestamp, const char *rules,
                     const char *model_reply)
 {
     size_t length;
@@ -40,13 +41,16 @@ int64_t shy_extract(const char *path, const char *url, int64_t timestamp, const 
     /* A missing optional model file is represented as invalid model input so
        extraction can retain its deterministic results and a diagnostic. */
     mulib_json_t *record = (!*rules || rule) ? shy_capture_record(data, length, url, timestamp,
-        rule ? rule : "", model ? model : (*model_reply ? "unreadable model reply" : ""), "dragnet") : NULL;
+        rule ? rule : "", model ? model : (*model_reply ? "unreadable model reply" : ""), plugin) : NULL;
     free(data);
     free(rule);
     free(model);
     if (!record) return shy_error("extractor failed; check URL, capture time, site rules and snapshot limits");
     return shy_emit(record);
 }
+
+int64_t shy_extract(const char *path, const char *url, int64_t timestamp, const char *rules, const char *model)
+{ return shy_extract_plugin("dragnet",path,url,timestamp,rules,model); }
 
 int64_t shy_plugins(void)
 {
@@ -58,6 +62,7 @@ int64_t shy_plugins(void)
         int ok = shy_add(row, "name", mulib_json_string(plugin->name)) &&
             shy_add(row, "version", mulib_json_string(plugin->version)) &&
             shy_add(row, "abi", mulib_json_number(plugin->abi));
+        if (ok && shy_plugin_configuration(plugin)) ok=shy_add(row,"sdk_abi",mulib_json_number(1));
         if (!ok) mulib_json_destroy(row);
         if (!ok || !shy_push(out, row)) { mulib_json_destroy(out); return 2; }
     }
@@ -122,6 +127,15 @@ int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
 static char formula_digest[65];
 static char formula_error[SHY_VM_ERROR];
 static int formula_isolation, formula_sandbox_active;
+
+/* Borrowed audit views; digest/diagnostic/backend/profile describe the most
+   recent evaluation and must be copied before evaluating another formula. */
+const char *shy_formula_digest(void) { return formula_digest; }
+const char *shy_formula_diagnostic(void) { return formula_error; }
+const char *shy_formula_backend(void) { return formula_isolation < 0 ? "invalid" : formula_isolation ? "process" : "off"; }
+const char *shy_formula_profile(void) { return formula_sandbox_active ? SHY_SANDBOX_PROFILE : "none"; }
+const char *shy_runtime_revision(void) { return SHY_MULIB_REVISION; }
+int64_t shy_mune_api(void) { return mulib_mune_version(); }
 
 int64_t shy_formula(const char *path, int64_t reference, int64_t weekend, int64_t premium)
 {
@@ -197,37 +211,32 @@ int64_t shy_report_rate(int64_t reference, int64_t proposed, int64_t adjusted,
     return status ? status : (ok ? 0 : 2);
 }
 
-int64_t shy_optimize(const char *path, int64_t floor, int64_t cap, int64_t tick,
-                     int64_t cost)
+int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,
+                         int64_t floor, int64_t cap, int64_t tick, int64_t cost)
 {
     if (floor < 0 || cap < floor || cap > INT64_C(1000000000000) ||
         tick <= 0 || tick > INT64_C(1000000000000) || cost < 0 ||
         cost > INT64_C(1000000000000)) return shy_error("invalid optimization constraints");
-    size_t n;
-    char *data = shy_read(path, SHY_PAGE_LIMIT, &n);
-    if (!data) return shy_error("cannot read demand file");
-    char digest[65];
-    shy_digest(data, n, digest);
-    mulib_json_t *json = mulib_json_parse(data, n, NULL);
-    free(data);
-    size_t count = mulib_json_size(json);
-    int ok = mulib_json_typeof(json) == MULIB_JSON_ARRAY && count > 0 && count <= 4096;
+    int rich = mulib_json_typeof(json) == MULIB_JSON_OBJECT;
+    const mulib_json_t *scenarios = rich ? mulib_json_get(json, "scenarios") : json;
+    size_t count = mulib_json_size(scenarios);
+    int ok = mulib_json_typeof(scenarios) == MULIB_JSON_ARRAY && count > 0 && count <= 4096;
     double prices[4096], demand[4096];
     size_t feasible = 0;
     for (size_t i = 0; ok && i < count; ++i) {
-        const mulib_json_t *row = mulib_json_at(json, i);
+        const mulib_json_t *row = mulib_json_at(scenarios, i);
         const mulib_json_t *price = mulib_json_get(row, "rate_minor");
         const mulib_json_t *units = mulib_json_get(row, "expected_units");
         double p = mulib_json_numeric(price), u = mulib_json_numeric(units);
         ok = mulib_json_typeof(price) == MULIB_JSON_NUMBER &&
              mulib_json_typeof(units) == MULIB_JSON_NUMBER &&
+             isfinite(p) && isfinite(u) &&
              p >= 0 && p <= 1e12 && trunc(p) == p && u >= 0 && u <= 1e12;
         if (ok && p >= (double)floor && p <= (double)cap && (int64_t)p % tick == 0) {
             prices[feasible] = p;
             demand[feasible++] = u;
         }
     }
-    mulib_json_destroy(json);
     if (!ok || !feasible) return shy_error("expected supplied demand estimates on a feasible rate grid");
     const mulib_priceopt_constraints_t limits = { .min_price = (double)floor,
         .max_price = (double)cap, .unit_cost = (double)cost };
@@ -237,7 +246,7 @@ int64_t shy_optimize(const char *path, int64_t floor, int64_t cap, int64_t tick,
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
     if (!shy_add(out, "schema", mulib_json_string("shylock.optimization/v1")) ||
         !shy_add(out, "kind", mulib_json_string("demand_optimized")) ||
-        !shy_add(out, "demand_origin", mulib_json_string("externally_supplied")) ||
+        !shy_add(out, "demand_origin", mulib_json_string(rich ? "empirical_booking_outcomes" : "externally_supplied")) ||
         !shy_add(out, "floor_minor", mulib_json_number((double)floor)) ||
         !shy_add(out, "cap_minor", mulib_json_number((double)cap)) ||
         !shy_add(out, "tick_minor", mulib_json_number((double)tick)) ||
@@ -249,6 +258,9 @@ int64_t shy_optimize(const char *path, int64_t floor, int64_t cap, int64_t tick,
         !shy_add(out, "expected_profit_minor", mulib_json_number(result.score))) {
         mulib_json_destroy(out);
         return shy_error("could not allocate optimization result");
+    }
+    if (rich && !shy_add(out, "demand_lineage", shy_clone(json))) {
+        mulib_json_destroy(out); return 2;
     }
     return shy_emit(out);
 }

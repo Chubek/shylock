@@ -1,0 +1,120 @@
+extern fn shy_formula(path:string,reference:i64,weekend:i64,premium:i64)->i64;
+extern fn shy_report_rate(reference:i64,proposed:i64,adjusted:i64,weekend:i64,premium:i64,floor:i64,cap:i64,tick:i64)->i64;
+extern fn shy_formula_digest()->string;
+extern fn shy_formula_diagnostic()->string;
+extern fn shy_formula_backend()->string;
+extern fn shy_formula_profile()->string;
+extern fn shy_runtime_revision()->string;
+extern fn shy_mune_api()->i64;
+
+fn adjustment_valid(reference:i64,weekend:i64,premium:i64,floor:i64,cap:i64,tick:i64)->bool {
+  return reference>=0 && reference<=1000000000000 && weekend>=0 && weekend<=1 &&
+    premium>=0 && premium<=10000 && floor>=0 && cap>=floor && cap<=1000000000000 &&
+    tick>=1 && tick<=1000000000000 && ((floor+tick-1)/tick)*tick<=(cap/tick)*tick;
+}
+
+fn adjustment_grid(proposed:i64,floor:i64,cap:i64,tick:i64)->i64 {
+  let low=((floor+tick-1)/tick)*tick;
+  let high=(cap/tick)*tick;
+  var rate=((proposed+tick/2)/tick)*tick;
+  if rate<low { rate=low; }
+  if rate>high { rate=high; }
+  return rate;
+}
+
+fn adjust(path:string,reference:i64,weekend:i64,premium:i64,floor:i64,cap:i64,tick:i64)->i64 {
+  if !adjustment_valid(reference,weekend,premium,floor,cap,tick) {
+    return shy_error("invalid adjustment inputs or no allowed rate on tick grid");
+  }
+  let proposed=shy_formula(path,reference,weekend,premium);
+  if proposed<0 { return shy_report_rate(reference,proposed,-1,weekend,premium,floor,cap,tick); }
+  return shy_report_rate(reference,proposed,adjustment_grid(proposed,floor,cap,tick),weekend,premium,floor,cap,tick);
+}
+
+macro formula_case_fields {
+  rule ($index: Expression, $expected: Expression) => expression {
+    @fields("closed","cases",$index,"name:string","reference_minor:integer","weekend:boolean",
+      "premium_bp:integer","floor_minor:integer","cap_minor:integer","tick_minor:integer",$expected)
+  };
+}
+
+fn formula_cases_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","cases:array") ||
+    shy_document_text("",-1,"schema")!="shylock.formula-cases/v1" { return false; }
+  let count=shy_document_size("",-1,"cases");
+  if count<1 || count>128 { return false; }
+  var i=0;
+  while i<count {
+    if !formula_case_fields!(i,"expected_minor:integer") && !formula_case_fields!(i,"expected_minor:null") { return false; }
+    let name=shy_document_text("cases",i,"name");
+    if name=="" || text_len(name)>128 || !adjustment_valid(shy_document_number("cases",i,"reference_minor"),
+      shy_document_boolean("cases",i,"weekend"),shy_document_number("cases",i,"premium_bp"),
+      shy_document_number("cases",i,"floor_minor"),shy_document_number("cases",i,"cap_minor"),
+      shy_document_number("cases",i,"tick_minor")) { return false; }
+    var j=0;
+    while j<i {
+      if name==shy_document_text("cases",j,"name") { return false; }
+      j=j+1;
+    }
+    i=i+1;
+  }
+  return true;
+}
+
+fn formula_test(path:string,cases:string)->i64 {
+  if shy_document_open(cases)!=1 { return shy_error("cannot read formula cases JSON"); }
+  if !formula_cases_valid() { shy_document_close(); return shy_error("invalid formula cases, constraints or duplicate names"); }
+  let count=shy_document_size("",-1,"cases");
+  let out=buffer_new();
+  buffer_append(out,"{\"schema\":\"shylock.formula-tests/v1\",\"contract\":\"adjust_rate/v1\",");
+  demand_member!(out,"cases_id",shy_document_id());
+  demand_member!(out,"mulib_revision",shy_runtime_revision());
+  buffer_append(out,"\"mune_api\":"); buffer_append(out,SX.sexpr_nat(shy_mune_api()));
+  buffer_append(out,",\"runtime_steps\":50000,\"runtime_heap_bytes\":1048576,");
+  buffer_append(out,"\"cases\":[");
+  var i=0;
+  var passed=0;
+  var source="";
+  while i<count {
+    let reference=shy_document_number("cases",i,"reference_minor");
+    let weekend=shy_document_boolean("cases",i,"weekend");
+    let premium=shy_document_number("cases",i,"premium_bp");
+    let floor=shy_document_number("cases",i,"floor_minor");
+    let cap=shy_document_number("cases",i,"cap_minor");
+    let tick=shy_document_number("cases",i,"tick_minor");
+    let proposed=shy_formula(path,reference,weekend,premium);
+    let digest=shy_formula_digest();
+    if i==0 { source=text_concat("",digest); }
+    var adjusted=-1;
+    if proposed>=0 { adjusted=adjustment_grid(proposed,floor,cap,tick); }
+    let expected=shy_document_number("cases",i,"expected_minor");
+    let pass=text_len(digest)==64 && digest==source && adjusted==expected;
+    if pass { passed=passed+1; }
+    if i>0 { buffer_byte(out,44); }
+    buffer_byte(out,123);
+    demand_member!(out,"name",shy_document_text("cases",i,"name"));
+    demand_member!(out,"formula_blake3",digest);
+    demand_member!(out,"isolation",shy_formula_backend());
+    demand_member!(out,"sandbox_profile",shy_formula_profile());
+    var status="failed"; if pass { status="passed"; }
+    demand_member!(out,"status",status);
+    buffer_append(out,"\"input\":"); buffer_append(out,shy_document_json_at("cases",i,""));
+    buffer_append(out,",\"proposed_minor\":");
+    if proposed<0 { buffer_append(out,"null"); } else { buffer_append(out,SX.sexpr_nat(proposed)); }
+    buffer_append(out,",\"adjusted_minor\":");
+    if adjusted<0 { buffer_append(out,"null"); } else { buffer_append(out,SX.sexpr_nat(adjusted)); }
+    buffer_append(out,",\"formula_error\":");
+    if proposed<0 { buffer_append(out,shy_json_quote(shy_formula_diagnostic())); }
+    else { buffer_append(out,"null"); }
+    buffer_byte(out,125);
+    i=i+1;
+  }
+  buffer_append(out,"],\"passed\":"); buffer_append(out,SX.sexpr_nat(passed));
+  buffer_append(out,",\"failed\":"); buffer_append(out,SX.sexpr_nat(count-passed));
+  buffer_byte(out,125);
+  let emitted=shy_document_seal(buffer_text(out),"test_id",1);
+  shy_document_close();
+  if emitted!=0 { return emitted; }
+  if passed!=count { return 2; }
+  return 0;
+}

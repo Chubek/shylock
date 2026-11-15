@@ -1,5 +1,14 @@
 import "poindexter.on1x";
 import "worksheet.on1x";
+import "demand.on1x";
+import "formula.on1x";
+import "report.on1x";
+import "extensions.on1x";
+import "forecast.on1x";
+import "quote.on1x";
+import "pricing.on1x";
+import "model.on1x";
+import "dragnet.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -8,38 +17,19 @@ extern fn shy_discover(provider: string, query: string, capture: string, root: s
 extern fn shy_extract(capture: string, url: string, captured_at: i64, rules: string, model_reply: string) -> i64;
 extern fn shy_capture_page(url: string) -> i64;
 extern fn shy_estimate(series: string, horizon: i64, emit: i64) -> i64;
-extern fn shy_optimize(scenarios: string, floor: i64, cap: i64, tick: i64, cost: i64) -> i64;
-extern fn shy_formula(path: string, reference: i64, weekend: i64, premium: i64) -> i64;
-extern fn shy_report_rate(reference: i64, proposed: i64, adjusted: i64, weekend: i64, premium: i64, floor: i64, cap: i64, tick: i64) -> i64;
 extern fn shy_error(message: string) -> i64;
 extern fn shy_plugins() -> i64;
 extern fn shy_backtest(series: string, horizon: i64, training: i64) -> i64;
 extern fn shy_extensions_begin(configuration:string)->i64;
 extern fn shy_extensions_end()->i64;
 extern fn shy_extension_command(configuration:string,event:string,payload:string)->i64;
+extern fn shy_native_plugins_begin(configuration:string)->i64;
+extern fn shy_native_plugins_end()->i64;
 
 fn parse_int(text: string) -> i64 {
   let (ok, value, end) = Scan.basis_parsec_int(text, 0);
   if !ok || end != text_len(text) { return -1; }
   return value;
-}
-
-fn adjust(path: string, reference: i64, weekend: i64, premium: i64,
-          floor: i64, cap: i64, tick: i64) -> i64 {
-  if reference < 0 || reference > 1000000000000 || weekend < 0 || weekend > 1 ||
-     premium < 0 || premium > 10000 || floor < 0 || cap < floor ||
-     cap > 1000000000000 || tick <= 0 || tick > 1000000000000 {
-    return shy_error("invalid adjustment inputs");
-  }
-  let low = ((floor + tick - 1) / tick) * tick;
-  let high = (cap / tick) * tick;
-  if low > high { return shy_error("no allowed rate on tick grid"); }
-  let proposed = shy_formula(path, reference, weekend, premium);
-  if proposed < 0 { return shy_report_rate(reference, proposed, -1, weekend, premium, floor, cap, tick); }
-  var rate = ((proposed + tick / 2) / tick) * tick;
-  if rate < low { rate = low; }
-  if rate > high { rate = high; }
-  return shy_report_rate(reference, proposed, rate, weekend, premium, floor, cap, tick);
 }
 
 fn run_command() -> i64 {
@@ -49,6 +39,12 @@ fn run_command() -> i64 {
   let b = CLI.basis_command_line_get_env("SHY_2");
   let c = CLI.basis_command_line_get_env("SHY_3");
   let d = CLI.basis_command_line_get_env("SHY_4");
+  if command=="forecast" && count==2 { return forecast(a,b); }
+  if command=="quote" && count==1 { return stay_quote(a); }
+  if command=="price" && (count==2 || count==3) { return price(a,b,c); }
+  if command=="optimize-model" && count==1 { return optimize_model(a); }
+  if command=="print-report" && count==2 { return print_report(a,b); }
+  if command=="formula-test" && count==2 { return formula_test(a,b); }
   if command == "review" && count>=5 && count<=7 {
     return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
       CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
@@ -75,17 +71,33 @@ fn run_command() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_6")),rich);
   }
   if command == "plugins" && count==0 { return shy_plugins(); }
-  if command == "discover" && (count == 2 || count == 3) {
+  if command=="discover-many" && count==1 {
+    var providers=CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
+    if providers=="" { providers=Path.basis_path_join(CLI.basis_command_line_get_env("SHY_ROOT"),"third_party/mulib/library/elvi-scrape"); }
+    return dragnet_many(a,providers);
+  }
+  if command == "discover" && count>=2 && count<=4 {
     let root = CLI.basis_command_line_get_env("SHY_ROOT");
     let providers = CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
+    var limit=10;
+    if count==4 { limit=parse_int(d); }
     if providers == "" {
-      return shy_discover(a, b, c, Path.basis_path_join(root, "third_party/mulib/library/elvi-scrape"));
+      return dragnet_discover(a, b, c, Path.basis_path_join(root, "third_party/mulib/library/elvi-scrape"),limit);
     }
-    return shy_discover(a, b, c, providers);
+    return dragnet_discover(a, b, c, providers,limit);
+  }
+  if command=="discover-replay" && count==1 { return dragnet_replay(a); }
+  if command=="snapshot" && (count==2 || count==3) { return dragnet_snapshot(a,parse_int(b),c); }
+  if command=="extract-snapshot" && count>=1 && count<=4 {
+    var plugin=d;
+    if plugin=="" { plugin="dragnet"; }
+    return shy_dragnet_extract_snapshot(a,b,c,plugin);
   }
   if command == "capture" && count == 1 { return shy_capture_page(a); }
-  if command == "extract" && count >= 3 && count <= 5 {
-    return shy_extract(a, b, parse_int(c), d, CLI.basis_command_line_get_env("SHY_5"));
+  if command == "extract" && count >= 3 && count <= 6 {
+    var plugin=CLI.basis_command_line_get_env("SHY_6");
+    if plugin=="" { plugin="dragnet"; }
+    return shy_extract_plugin(plugin,a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
   }
   if command == "estimate" && count == 2 {
     return shy_estimate(a, parse_int(b), 1);
@@ -103,8 +115,11 @@ fn run_command() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_8")));
   }
   if command == "optimize" && count == 5 {
-    return shy_optimize(a, parse_int(b), parse_int(c), parse_int(d),
+    return optimize(a, parse_int(b), parse_int(c), parse_int(d),
       parse_int(CLI.basis_command_line_get_env("SHY_5")));
+  }
+  if command == "demand" && count == 4 {
+    return demand(a,parse_int(b),parse_int(c),parse_int(d));
   }
   if command == "adjust" && count == 7 {
     return adjust(a, parse_int(b), parse_int(c), parse_int(d),
@@ -126,13 +141,25 @@ fn run_command() -> i64 {
     println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
     println("plugins");
     println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
-    println("discover PROVIDER QUERY [SERP_HTML]");
+    println("extension-replay CONFIG_JSON EVENTS_JSON");
+    println("formula-test FORMULA CASES_JSON");
+    println("print-report TEMPLATE_JSON DATA_JSON");
+    println("forecast SERIES_JSON FORECAST_POLICY_JSON");
+    println("quote QUOTE_INPUT_JSON");
+    println("price COHORT_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
+    println("optimize-model MODEL_POLICY_JSON");
+    println("discover PROVIDER QUERY [SERP_HTML [LIMIT]]");
+    println("discover-replay DISCOVERY_JSON");
+    println("discover-many DISCOVERY_JOB_JSON");
+    println("snapshot HTTPS_URL CAPTURE_UNIX_SECONDS [PAGE_HTML]");
+    println("extract-snapshot SNAPSHOT_JSON [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
     println("capture HTTPS_URL");
-    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON]]");
+    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
     println("estimate SERIES_JSON HORIZON");
     println("backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES");
     println("recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK");
     println("optimize DEMAND_JSON FLOOR CAP TICK UNIT_COST");
+    println("demand BOOKING_OUTCOMES_JSON AS_OF CAPACITY MIN_SAMPLES");
     println("adjust FORMULA REFERENCE_MINOR WEEKEND PREMIUM_BP FLOOR CAP TICK");
     return 0;
   }
@@ -141,14 +168,19 @@ fn run_command() -> i64 {
 
 fn main()->i64 {
   let command=CLI.basis_command_line_get_env("SHY_COMMAND");
+  if command=="extension-replay" && CLI.basis_command_line_get_env("SHY_COUNT")=="2" {
+    return extension_replay(CLI.basis_command_line_get_env("SHY_1"),CLI.basis_command_line_get_env("SHY_2"));
+  }
   if command=="extension" && CLI.basis_command_line_get_env("SHY_COUNT")=="3" {
     return shy_extension_command(CLI.basis_command_line_get_env("SHY_1"),
       CLI.basis_command_line_get_env("SHY_2"),CLI.basis_command_line_get_env("SHY_3"));
   }
+  if shy_native_plugins_begin(CLI.basis_command_line_get_env("SHY_NATIVE_PLUGINS"))!=0 { return 2; }
   shy_extensions_begin(CLI.basis_command_line_get_env("SHY_EXTENSIONS"));
   let status=run_command();
   # Drain deferred hooks only after domain adapters have released their locks.
   # Extension failures are diagnosed independently; never replace a core result.
   shy_extensions_end();
+  shy_native_plugins_end();
   return status;
 }

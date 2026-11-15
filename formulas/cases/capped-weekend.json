@@ -1,0 +1,8 @@
+{
+  "schema": "shylock.formula-cases/v1",
+  "cases": [
+    {"name":"premium bounded at ten percent","reference_minor":18000,"weekend":true,"premium_bp":5000,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":19800},
+    {"name":"smaller premium retained","reference_minor":18000,"weekend":true,"premium_bp":500,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":18900},
+    {"name":"weekday unchanged","reference_minor":18000,"weekend":false,"premium_bp":5000,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":18000}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schema":"shylock.forecast-policy/v1",
+  "horizon":1,"minimum_training":3,"window":32,
+  "selection_samples":1,"validation_samples":1,"interval_bp":9000,
+  "market_method":"median","market_parameter_ppm":0,
+  "candidates":[
+    {"name":"last quote","model":"last"},
+    {"name":"historical median","model":"median"},
+    {"name":"ema 40 percent","model":"ema","alpha_bp":4000},
+    {"name":"damped Holt","model":"holt","alpha_bp":4000,"beta_bp":2000,"phi_bp":9000},
+    {"name":"local level","model":"kalman","process_variance":10000,"measurement_variance":40000},
+    {"name":"stationary AR1","model":"ar1"},
+    {"name":"robust trend","model":"robust-trend"}
+  ]
+}

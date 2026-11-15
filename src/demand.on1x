@@ -1,0 +1,178 @@
+import std.sexpr.sexpr as SX;
+import std.collections.List as List;
+import std.time.Date as Date;
+import "demand_macros.on1x";
+
+extern fn shy_document_open(path:string)->i64;
+extern fn shy_document_parse(text:string)->i64;
+extern fn shy_document_close()->i64;
+extern fn shy_document_has(section:string,index:i64,key:string,kind:string)->i64;
+extern fn shy_document_size(section:string,index:i64,key:string)->i64;
+extern fn shy_document_text(section:string,index:i64,key:string)->string;
+extern fn shy_document_number(section:string,index:i64,key:string)->i64;
+extern fn shy_document_child(key:string)->i64;
+extern fn shy_document_reset()->i64;
+extern fn shy_document_index(index:i64)->i64;
+extern fn shy_document_boolean(section:string,index:i64,key:string)->i64;
+extern fn shy_document_json_at(section:string,index:i64,key:string)->string;
+extern fn shy_document_json()->string;
+extern fn shy_document_id()->string;
+extern fn shy_json_quote(text:string)->string;
+extern fn shy_json_ratio(numerator:i64,denominator:i64)->string;
+extern fn shy_document_seal(text:string,field:string,emit:i64)->i64;
+extern fn shy_document_optimize(floor:i64,cap:i64,tick:i64,cost:i64)->i64;
+extern fn shy_date(text:string)->i64;
+
+fn booking_text(index:i64,key:string)->string { return shy_document_text("rows",index,key); }
+fn booking_number(index:i64,key:string)->i64 { return shy_document_number("rows",index,key); }
+fn demand_label(value:string)->bool { return text_len(value)>0 && text_len(value)<=256; }
+fn demand_scope(value:string)->bool { return value=="included" || value=="excluded"; }
+
+# All inputs are explicit finalized listing-night opportunities. Calendar
+# unavailability, asking prices and model suggestions are not booking outcomes.
+fn demand_collect(as_of:i64)->(i64,sexpr) {
+  let count=shy_document_size("",-1,"rows");
+  if count<1 || count>4096 { return (shy_error("booking outcomes need 1..4096 rows"),sx_nil()); }
+  var selected=sx_nil();
+  var identities=sx_nil();
+  var i=0;
+  while i<count {
+    if !@fields("closed","rows",i,"opportunity_id:string","listing_id:string",
+      "stay_date:string","rate_minor:integer","outcome:string","finalized_at:integer","source_ref:string") {
+      return (shy_error("invalid booking-outcome row fields or types"),sx_nil());
+    }
+    let stay=shy_date(booking_text(i,"stay_date"));
+    let finalized=booking_number(i,"finalized_at");
+    let outcome=booking_text(i,"outcome");
+    if !demand_label(booking_text(i,"opportunity_id")) || !demand_label(booking_text(i,"listing_id")) ||
+       !demand_label(booking_text(i,"source_ref")) || stay<19700101 || finalized>253402300799 ||
+       (outcome!="booked" && outcome!="not_booked") {
+      return (shy_error("unresolved booking identity, date, outcome or provenance"),sx_nil());
+    }
+    if shy_date(text_slice(Date.basis_date_utc_iso(finalized),0,10))<=stay {
+      return (shy_error("booking outcomes must be finalized after the offered night ends (UTC)"),sx_nil());
+    }
+    if finalized<=as_of {
+      var duplicate=false;
+      # Check every eligible identity, including aliases of corroborating rows.
+      var rest=identities;
+      while sx_kind(rest)==3 {
+        let previous=parse_int(sx_text(sx_head(rest)));
+        let same_night=booking_text(i,"listing_id")==booking_text(previous,"listing_id") &&
+          booking_text(i,"stay_date")==booking_text(previous,"stay_date");
+        let same_id=booking_text(i,"opportunity_id")==booking_text(previous,"opportunity_id");
+        if same_night || same_id {
+          if !same_night || booking_number(i,"rate_minor")!=booking_number(previous,"rate_minor") ||
+             outcome!=booking_text(previous,"outcome") {
+            shy_error("conflicting finalized outcomes for an opportunity or listing-night");
+            return (3,sx_nil());
+          }
+          duplicate=true;
+        }
+        rest=sx_tail(rest);
+      }
+      let index=sx_string(SX.sexpr_nat(i));
+      identities=List.basis_list_cons(index,identities);
+      if !duplicate { selected=List.basis_list_cons(index,selected); }
+    }
+    i=i+1;
+  }
+  return (0,selected);
+}
+
+fn demand_render(as_of:i64,capacity:i64,minimum:i64)->(i64,string) {
+  demand_require!(as_of>=0 && as_of<=253402300799 && capacity>=1 && capacity<=1000000 &&
+    minimum>=1 && minimum<=4096,"invalid demand cutoff, capacity or minimum samples");
+  demand_require!(@fields("closed","",-1,"schema:string","cohort:string","currency:string",
+    "scale:integer","basis:string","context:object","rows:array"),"invalid booking-outcomes document fields or types");
+  let currency=shy_document_text("",-1,"currency");
+  demand_require!(shy_document_text("",-1,"schema")=="shylock.booking-outcomes/v1" &&
+    demand_label(shy_document_text("",-1,"cohort")) && shy_document_text("",-1,"basis")=="nightly" &&
+    shy_money_scale(currency)>=0 && shy_document_number("",-1,"scale")==shy_money_scale(currency),
+    "booking outcomes need an explicit nightly cohort, currency and scale");
+  demand_require!(@fields("closed","context",-1,"guests:integer","taxes:string","fees:string"),
+    "invalid booking context fields or types");
+  demand_require!(shy_document_number("context",-1,"guests")>=1 && shy_document_number("context",-1,"guests")<=64 &&
+    demand_scope(shy_document_text("context",-1,"taxes")) && demand_scope(shy_document_text("context",-1,"fees")),
+    "booking context needs guests and explicit tax/fee scope");
+  let (status,selected)=demand_collect(as_of);
+  if status!=0 { return (status,""); }
+  demand_require!(!List.basis_list_is_empty(selected),"no finalized booking opportunities at the cutoff");
+
+  let scenarios=buffer_new();
+  buffer_byte(scenarios,91);
+  var last=-1;
+  var running=true;
+  var first=true;
+  while running {
+    var next=1000000000001;
+    var rest=selected;
+    while sx_kind(rest)==3 {
+      let rate=booking_number(parse_int(sx_text(sx_head(rest))),"rate_minor");
+      if rate>last && rate<next { next=rate; }
+      rest=sx_tail(rest);
+    }
+    if next==1000000000001 { running=false; }
+    else {
+      var offered=0;
+      var booked=0;
+      var rows=selected;
+      while sx_kind(rows)==3 {
+        let index=parse_int(sx_text(sx_head(rows)));
+        if booking_number(index,"rate_minor")==next {
+          offered=offered+1;
+          if booking_text(index,"outcome")=="booked" { booked=booked+1; }
+        }
+        rows=sx_tail(rows);
+      }
+      demand_require!(offered>=minimum,"a rate has fewer distinct opportunities than MIN_SAMPLES");
+      if !first { buffer_byte(scenarios,44); } first=false;
+      buffer_append(scenarios,"{\"rate_minor\":"); buffer_append(scenarios,SX.sexpr_nat(next));
+      buffer_append(scenarios,",\"offered_units\":"); buffer_append(scenarios,SX.sexpr_nat(offered));
+      buffer_append(scenarios,",\"booked_units\":"); buffer_append(scenarios,SX.sexpr_nat(booked));
+      buffer_append(scenarios,",\"expected_units\":"); buffer_append(scenarios,shy_json_ratio(capacity*booked,offered));
+      buffer_byte(scenarios,125);
+      last=next;
+    }
+  }
+  buffer_byte(scenarios,93);
+  let out=buffer_new();
+  buffer_append(out,"{\"schema\":\"shylock.demand/v1\",\"kind\":\"empirical_booking_demand\",\"estimator\":\"booked-share/v1\",");
+  demand_member!(out,"source_id",shy_document_id());
+  buffer_append(out,"\"as_of\":"); buffer_append(out,SX.sexpr_nat(as_of));
+  buffer_append(out,",\"capacity\":"); buffer_append(out,SX.sexpr_nat(capacity));
+  buffer_append(out,",\"minimum_samples\":"); buffer_append(out,SX.sexpr_nat(minimum));
+  buffer_append(out,",\"source\":"); buffer_append(out,shy_document_json());
+  buffer_append(out,",\"scenarios\":"); buffer_append(out,buffer_text(scenarios)); buffer_byte(out,125);
+  return (0,buffer_text(out));
+}
+
+fn demand(path:string,as_of:i64,capacity:i64,minimum:i64)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read booking-outcomes JSON"); }
+  let (status,text)=demand_render(as_of,capacity,minimum);
+  var result=status;
+  if status==0 { result=shy_document_seal(text,"demand_id",1); }
+  shy_document_close();
+  return result;
+}
+
+fn demand_verify_current()->i64 {
+  let as_of=shy_document_number("",-1,"as_of");
+  let capacity=shy_document_number("",-1,"capacity");
+  let minimum=shy_document_number("",-1,"minimum_samples");
+  if shy_document_child("source")!=1 { return shy_error("expected replayable demand artifact"); }
+  let (status,text)=demand_render(as_of,capacity,minimum);
+  if status!=0 { return status; }
+  return shy_document_seal(text,"demand_id",0);
+}
+
+fn optimize(path:string,floor:i64,cap:i64,tick:i64,cost:i64)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read demand JSON"); }
+  var result=0;
+  if shy_document_has("",-1,"","array")!=1 {
+    result=demand_verify_current();
+  }
+  if result==0 { result=shy_document_optimize(floor,cap,tick,cost); }
+  shy_document_close();
+  return result;
+}

@@ -1,0 +1,9 @@
+{
+  "schema":"shylock.model-policy/v1","currency":"EUR","scale":2,"risk_bp":5000,
+  "constraints":{"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"unit_cost_minor":2000,
+    "minimum_margin_minor":1000,"previous_minor":0,"max_change_bp":0,"objective":"profit"},
+  "models":[
+    {"name":"optimistic linear demand","kind":"linear","scale_units":10,"shape_ppm":300,"reference_minor":0,"weight_bp":5000},
+    {"name":"conservative linear demand","kind":"linear","scale_units":8,"shape_ppm":300,"reference_minor":0,"weight_bp":5000}
+  ]
+}

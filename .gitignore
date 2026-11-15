@@ -14,6 +14,8 @@ __pycache__/
 # Local archives and scratch captures
 /shylock.zip
 /captures/
+/extensions/monitor-state.db
+/extensions/monitor-state.db.lock
 
 # Agent residue
 .commandcode

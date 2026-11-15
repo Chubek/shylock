@@ -1,0 +1,6 @@
+extern fn shy_document_allocation_test()->i64;
+fn main()->i64 {
+  if shy_document_allocation_test()!=1 { return 1; }
+  println("Document allocation-failure and cleanup tests passed.");
+  return 0;
+}

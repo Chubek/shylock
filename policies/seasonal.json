@@ -1,0 +1,11 @@
+{
+  "schema":"shylock.forecast-policy/v1",
+  "horizon":2,"minimum_training":8,"window":32,
+  "selection_samples":4,"validation_samples":4,"interval_bp":9000,
+  "market_method":"huber","market_parameter_ppm":0,
+  "candidates":[
+    {"name":"last quote","model":"last"},
+    {"name":"damped Holt","model":"holt","alpha_bp":4000,"beta_bp":2000,"phi_bp":9000},
+    {"name":"four-interval season","model":"seasonal","alpha_bp":5000,"beta_bp":2000,"gamma_bp":5000,"season":4}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "schema":"shylock.quote-input/v1","currency":"EUR","scale":2,"rate_minor":20700,
+  "charges":{"nights":3,"cleaning_minor":7500,"other_fees_minor":0,"tax_bp":1000,
+    "tax_mode":"exclusive","tax_scope":"accommodation_and_fees"}
+}

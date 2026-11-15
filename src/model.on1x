@@ -1,0 +1,42 @@
+fn model_policy_valid(low:i64,high:i64)->bool {
+  if !@fields("closed","",-1,"schema:string","currency:string","scale:integer","risk_bp:integer","constraints:object","models:array") ||
+     shy_document_text("",-1,"schema")!="shylock.model-policy/v1" { return false; }
+  let currency=shy_document_text("",-1,"currency");
+  let count=shy_document_size("",-1,"models");
+  let tick=shy_document_number("constraints",-1,"tick_minor");
+  if shy_money_scale(currency)<0 || shy_document_number("",-1,"scale")!=shy_money_scale(currency) ||
+    shy_document_number("",-1,"risk_bp")>100000 || count<1 || count>16 || tick<1 || (high-low)/tick>99999 { return false; }
+  var total_weight=0;
+  var i=0;
+  while i<count {
+    if !@fields("closed","models",i,"name:string","kind:string","scale_units:integer","shape_ppm:integer","reference_minor:integer","weight_bp:integer") {
+      return false;
+    }
+    let kind=shy_document_text("models",i,"kind");
+    let name=shy_document_text("models",i,"name");
+    let reference=shy_document_number("models",i,"reference_minor");
+    let shape=shy_document_number("models",i,"shape_ppm");
+    let weight=shy_document_number("models",i,"weight_bp");
+    if name=="" || text_len(name)>64 || shy_document_number("models",i,"scale_units")>1000000 || weight>1000000 ||
+      (kind!="linear" && kind!="isoelastic" && kind!="logistic") || (kind=="linear" && reference!=0) ||
+      (kind=="isoelastic" && (reference<1 || (weight>0 && low==0))) || (kind=="logistic" && shape<1) { return false; }
+    var j=0;
+    while j<i {
+      if name==shy_document_text("models",j,"name") { return false; }
+      j=j+1;
+    }
+    total_weight=total_weight+weight;
+    i=i+1;
+  }
+  return total_weight>0;
+}
+
+fn optimize_model(path:string)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read demand-model policy"); }
+  let (bounds,low,high)=pricing_bounds();
+  var result=2;
+  if bounds && model_policy_valid(low,high) { result=shy_model_optimize(shy_document_json(),low,high); }
+  else { shy_error("invalid model policy, weights, parameters, movement/margin bounds or search size"); }
+  shy_document_close();
+  return result;
+}

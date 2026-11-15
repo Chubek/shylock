@@ -1,0 +1,153 @@
+extern fn shy_engine_pricing_policy(policy:string)->i64;
+extern fn shy_engine_take_demand()->i64;
+extern fn shy_engine_optimize(low:i64,high:i64,tick:i64,cost:i64,objective:string)->i64;
+extern fn shy_engine_decision(status:string,proposed:i64,formula_rate:i64,final_rate:i64,formula_audit:string,stay:string)->i64;
+extern fn shy_model_optimize(policy:string,low:i64,high:i64)->i64;
+
+# Movement limits are integer inward bounds. In particular, change=0 freezes an
+# explicit previous rate; it does not inherit priceopt's zero-disables convention.
+fn pricing_bounds()->(bool,i64,i64) {
+  if !@fields("closed","constraints",-1,"floor_minor:integer","cap_minor:integer","tick_minor:integer",
+    "unit_cost_minor:integer","minimum_margin_minor:integer","previous_minor:integer","max_change_bp:integer","objective:string") {
+    return (false,0,0);
+  }
+  var low=shy_document_number("constraints",-1,"floor_minor");
+  var high=shy_document_number("constraints",-1,"cap_minor");
+  let tick=shy_document_number("constraints",-1,"tick_minor");
+  let margin=shy_document_number("constraints",-1,"unit_cost_minor")+shy_document_number("constraints",-1,"minimum_margin_minor");
+  let previous=shy_document_number("constraints",-1,"previous_minor");
+  let change=shy_document_number("constraints",-1,"max_change_bp");
+  let objective=shy_document_text("constraints",-1,"objective");
+  if tick<1 || change>10000 || (previous==0 && change!=0) || (objective!="profit" && objective!="revenue") {
+    return (false,0,0);
+  }
+  if margin>low { low=margin; }
+  if previous>0 {
+    let lower=(previous*(10000-change)+9999)/10000;
+    let upper=(previous*(10000+change))/10000;
+    if lower>low { low=lower; }
+    if upper<high { high=upper; }
+  }
+  low=((low+tick-1)/tick)*tick;
+  high=(high/tick)*tick;
+  return (low<=high && high<=1000000000000,low,high);
+}
+
+fn pricing_policy_valid(count:i64,demand:string)->bool {
+  if !@fields("closed","",-1,"schema:string","currency:string","scale:integer","as_of:integer",
+    "forecast:object","formula:object","constraints:object","decision:string","charges:object") ||
+     shy_document_text("",-1,"schema")!="shylock.pricing-policy/v1" { return false; }
+  let currency=shy_document_text("",-1,"currency");
+  let decision=shy_document_text("",-1,"decision");
+  if shy_money_scale(currency)<0 || shy_document_number("",-1,"scale")!=shy_money_scale(currency) ||
+     shy_document_number("",-1,"as_of")>253402300799 || (decision!="formula" && decision!="demand") ||
+     (decision=="demand" && demand=="") || (decision=="formula" && demand!="") || !charges_valid("charges") {
+    return false;
+  }
+  if !@fields("closed","formula",-1,"path:string","weekend:boolean","premium_bp:integer") ||
+    shy_document_text("formula",-1,"path")=="" || text_len(shy_document_text("formula",-1,"path"))>4096 ||
+    shy_document_number("formula",-1,"premium_bp")>10000 { return false; }
+  let (bounds,low,high)=pricing_bounds();
+  if !bounds { return false; }
+  shy_document_child("forecast");
+  let valid=forecast_policy_valid(count);
+  shy_document_reset();
+  return valid;
+}
+
+fn pricing_cohort_valid()->bool {
+  if shy_engine_number("verified")!=1 || shy_engine_field("currency")!=shy_document_text("",-1,"currency") ||
+     shy_engine_number("scale")!=shy_document_number("",-1,"scale") ||
+     shy_engine_number("latest_capture")>shy_document_number("",-1,"as_of") { return false; }
+  let nights=pricing_day(shy_engine_field("stay_end"))-pricing_day(shy_engine_field("stay_start"));
+  if nights!=shy_document_number("charges",-1,"nights") { return false; }
+  let mode=shy_document_text("charges",-1,"tax_mode");
+  let taxes=shy_engine_field("taxes");
+  if (mode=="inclusive" && taxes!="included") || (mode=="exclusive" && taxes!="excluded") { return false; }
+  if shy_engine_field("fees")=="included" &&
+    shy_document_number("charges",-1,"cleaning_minor")+shy_document_number("charges",-1,"other_fees_minor")>0 { return false; }
+  let today=pricing_day(text_slice(Date.basis_date_utc_iso(shy_document_number("",-1,"as_of")),0,10));
+  return today<=pricing_day(shy_engine_field("stay_start"));
+}
+
+fn pricing_demand_valid(as_of:i64)->bool {
+  shy_document_reset();
+  if shy_document_number("",-1,"as_of")>as_of || shy_document_child("source")!=1 { return false; }
+  return shy_document_text("",-1,"currency")==shy_engine_field("currency") &&
+    shy_document_number("",-1,"scale")==shy_engine_number("scale") &&
+    shy_document_text("",-1,"cohort")==shy_engine_field("cohort") &&
+    shy_document_number("context",-1,"guests")==shy_engine_number("guests") &&
+    shy_document_text("context",-1,"taxes")==shy_engine_field("taxes") &&
+    shy_document_text("context",-1,"fees")==shy_engine_field("fees");
+}
+
+fn pricing_formula_audit(reference:i64,weekend:i64,premium:i64,low:i64,high:i64,tick:i64,proposed:i64)->string {
+  let out=buffer_new();
+  buffer_append(out,"{\"contract\":\"adjust_rate/v1\",");
+  demand_member!(out,"source_blake3",shy_formula_digest());
+  demand_member!(out,"mulib_revision",shy_runtime_revision());
+  demand_member!(out,"isolation",shy_formula_backend());
+  demand_member!(out,"sandbox_profile",shy_formula_profile());
+  buffer_append(out,"\"mune_api\":"); buffer_append(out,SX.sexpr_nat(shy_mune_api()));
+  buffer_append(out,",\"runtime_steps\":50000,\"runtime_heap_bytes\":1048576,\"reference_minor\":"); buffer_append(out,SX.sexpr_nat(reference));
+  buffer_append(out,",\"weekend\":"); if weekend==1 { buffer_append(out,"true"); } else { buffer_append(out,"false"); }
+  buffer_append(out,",\"premium_bp\":"); buffer_append(out,SX.sexpr_nat(premium));
+  buffer_append(out,",\"effective_floor_minor\":"); buffer_append(out,SX.sexpr_nat(low));
+  buffer_append(out,",\"effective_cap_minor\":"); buffer_append(out,SX.sexpr_nat(high));
+  buffer_append(out,",\"tick_minor\":"); buffer_append(out,SX.sexpr_nat(tick));
+  buffer_append(out,",\"error\":");
+  if proposed<0 { buffer_append(out,shy_json_quote(shy_formula_diagnostic())); } else { buffer_append(out,"null"); }
+  buffer_byte(out,125);
+  return buffer_text(out);
+}
+
+fn price_run(policy_path:string,count:i64,demand_path:string)->i64 {
+  if !pricing_policy_valid(count,demand_path) || !pricing_cohort_valid() {
+    return shy_error("invalid pricing policy or incompatible/unverified/future cohort and stay context");
+  }
+  let policy=text_concat("",shy_document_json());
+  if policy=="" || shy_engine_pricing_policy(policy)!=1 { return shy_error("cannot snapshot pricing policy"); }
+  let currency=text_concat("",shy_document_text("",-1,"currency"));
+  let scale=shy_document_number("",-1,"scale");
+  let as_of=shy_document_number("",-1,"as_of");
+  let decision=text_concat("",shy_document_text("",-1,"decision"));
+  let formula=Path.basis_path_join(Path.basis_path_dir(policy_path),shy_document_text("formula",-1,"path"));
+  let weekend=shy_document_boolean("formula",-1,"weekend");
+  let premium=shy_document_number("formula",-1,"premium_bp");
+  let tick=shy_document_number("constraints",-1,"tick_minor");
+  let cost=shy_document_number("constraints",-1,"unit_cost_minor");
+  let objective=text_concat("",shy_document_text("constraints",-1,"objective"));
+  let (bounded,low,high)=pricing_bounds();
+  shy_document_child("forecast");
+  let fitted=forecast_run(count);
+  shy_document_reset();
+  if fitted!=0 { return shy_engine_decision("forecast_error",-1,-1,-1,"",""); }
+  let reference=shy_engine_reference();
+  let proposed=shy_formula(formula,reference,weekend,premium);
+  let audit=pricing_formula_audit(reference,weekend,premium,low,high,tick,proposed);
+  if proposed<0 { return shy_engine_decision("formula_error",-1,-1,-1,audit,""); }
+  let adjusted=adjustment_grid(proposed,low,high,tick);
+  var final=adjusted;
+  if decision=="demand" {
+    if shy_document_open(demand_path)!=1 { return shy_engine_decision("demand_error",proposed,adjusted,-1,audit,""); }
+    if demand_verify_current()!=0 || !pricing_demand_valid(as_of) || shy_engine_take_demand()!=1 {
+      shy_error("invalid, future or incompatible replayed booking demand");
+      return shy_engine_decision("demand_error",proposed,adjusted,-1,audit,"");
+    }
+    final=shy_engine_optimize(low,high,tick,cost,objective);
+    if final<0 { return shy_engine_decision("demand_error",proposed,adjusted,-1,audit,""); }
+    if shy_document_parse(policy)!=1 { return shy_engine_decision("quote_error",proposed,adjusted,-1,audit,""); }
+  }
+  let (status,stay)=quote_json("charges",final,currency,scale);
+  if status!=0 { return shy_engine_decision("quote_error",proposed,adjusted,-1,audit,""); }
+  return shy_engine_decision("priced",proposed,adjusted,final,audit,stay);
+}
+
+fn price(series_path:string,policy:string,demand:string)->i64 {
+  let count=shy_engine_open(series_path);
+  if count<0 { shy_engine_close(); return shy_error("cannot read pricing cohort"); }
+  if shy_document_open(policy)!=1 { shy_engine_close(); return shy_error("cannot read pricing policy JSON"); }
+  let status=price_run(policy,count,demand);
+  shy_document_close(); shy_engine_close();
+  return status;
+}

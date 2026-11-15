@@ -1,0 +1,12 @@
+{
+  "schema":"shylock.report-template/v1","title":"Shylock pricing decision",
+  "blocks":[
+    {"kind":"section","level":1,"text":"Decision"},
+    {"kind":"paragraph","text":"Status: {{/status}}. Currency: {{/policy/currency}}. Scale: {{/policy/scale}}. Reference: {{/reference_minor}}. Formula-adjusted: {{/formula_adjusted_minor}}. Recommended nightly minor units: {{/recommended_minor}}."},
+    {"kind":"section","level":1,"text":"Stay quote"},
+    {"kind":"paragraph","text":"Nights: {{/quote/charges/nights}}. Accommodation: {{/quote/accommodation_minor}}. Fees: {{/quote/fees_minor}}. Tax: {{/quote/tax_minor}}. Total: {{/quote/total_minor}} minor units."},
+    {"kind":"section","level":1,"text":"Evidence and evaluation"},
+    {"kind":"paragraph","text":"Estimator: {{/forecast/selected_estimator/name}}. Validation MAE: {{/forecast/validation/mae_minor}}. Decision: {{/decision_id}}."},
+    {"kind":"paragraph","text":"This is an asking-price/demand-model decision, not authenticated booking truth, guaranteed income or approved accounting."}
+  ]
+}

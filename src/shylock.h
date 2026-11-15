@@ -52,6 +52,10 @@ int shy_plugin_register(const shy_plugin *plugin);
 const shy_plugin *shy_plugin_find(const char *name);
 const shy_plugin *shy_plugin_at(size_t index);
 int shy_plugins_init(void);
+int shy_plugin_extract(const shy_plugin *, const shy_capture *, mulib_json_t *);
+const char *shy_plugin_configuration(const shy_plugin *);
+int64_t shy_native_plugins_begin(const char *configuration);
+int64_t shy_native_plugins_end(void);
 extern const shy_plugin shy_dragnet;
 /* Caller owns returned record. Sources are copied into replay provenance. */
 mulib_json_t *shy_capture_record(const char *html, size_t length, const char *url,
@@ -61,4 +65,7 @@ int shy_verify_capture(const mulib_json_t *record, const char *html, size_t leng
 int shy_series_load(const char *path, double values[4096], size_t *count,
     char digest[65], mulib_json_t **lineage);
 mulib_json_t *shy_estimator(void);
+/* Borrows an already validated demand artifact for the duration of the call. */
+int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,
+    int64_t floor, int64_t cap, int64_t tick, int64_t cost);
 #endif

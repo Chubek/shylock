@@ -1,50 +1,26 @@
 #include "shylock.h"
 #include "mulib-uri.h"
 #include "mulib-utf8.h"
+#include "mulib-money.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int shy_currency_scale(const char *currency)
-{
-    static const char *const two[] = { "EUR", "USD", "GBP", "CAD", "AUD", "CHF",
-        "SEK", "NOK", "DKK", "NZD", "PLN" };
-    for (size_t i = 0; i < sizeof two / sizeof *two; ++i)
-        if (!strcmp(currency, two[i])) return 2;
-    if (!strcmp(currency, "JPY") || !strcmp(currency, "KRW")) return 0;
-    if (!strcmp(currency, "KWD") || !strcmp(currency, "BHD")) return 3;
-    return -1;
-}
-
-int64_t shy_money_scale(const char *currency) { return shy_currency_scale(currency); }
-
-int64_t shy_date(const char *s)
-{
-    if (strlen(s) != 10 || s[4] != '-' || s[7] != '-') return -1;
-    for (size_t i = 0; i < 10; ++i)
-        if (i != 4 && i != 7 && (s[i] < '0' || s[i] > '9')) return -1;
-    int year = (s[0]-'0')*1000 + (s[1]-'0')*100 + (s[2]-'0')*10 + s[3]-'0';
-    int month = (s[5]-'0')*10 + s[6]-'0', day = (s[8]-'0')*10 + s[9]-'0';
-    static const int days[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
-    if (year < 1 || month < 1 || month > 12) return -1;
-    int leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    if (day < 1 || day > days[month-1] + (month == 2 && leap)) return -1;
-    return year * 10000 + month * 100 + day;
-}
-
 int shy_plugins_init(void)
 {
-    static int initialized;
-    if (!initialized) {
-        if (!shy_plugin_register(&shy_dragnet)) return 0;
-        initialized = 1;
-    }
-    return 1;
+    return shy_plugin_find("dragnet") || shy_plugin_register(&shy_dragnet);
 }
 
 static int identify_candidate(mulib_json_t *row, const char *html, size_t length,
     const char *capture_id, const shy_plugin *plugin)
 {
+    static const char *const fields[]={"method","amount_text","currency","basis","qualifier"};
+    for (size_t i=0;i<sizeof fields/sizeof *fields;++i)
+        if (mulib_json_typeof(mulib_json_get(row,fields[i]))!=MULIB_JSON_STRING) return 0;
+    if (mulib_json_typeof(row)!=MULIB_JSON_OBJECT || !*shy_text(row,"method") ||
+        strlen(shy_text(row,"method"))>64 || !*shy_text(row,"amount_text") || strlen(shy_text(row,"amount_text"))>128 ||
+        strlen(shy_text(row,"currency"))>3 || !*shy_text(row,"basis") || strlen(shy_text(row,"basis"))>32 ||
+        !*shy_text(row,"qualifier") || strlen(shy_text(row,"qualifier"))>32) return 0;
     int64_t offset = shy_integer(row, "byte_offset", SHY_PAGE_LIMIT);
     int64_t span = shy_integer(row, "byte_length", SHY_PAGE_LIMIT);
     if (offset < 0 || span <= 0 || (size_t)offset > length || (size_t)span > length - (size_t)offset)
@@ -52,11 +28,26 @@ static int identify_candidate(mulib_json_t *row, const char *html, size_t length
     char digest[65];
     shy_digest(html + offset, (size_t)span, digest);
     int scale = shy_currency_scale(shy_text(row, "currency"));
+    const mulib_json_t *minor=mulib_json_get(row,"minor");
+    if (!minor) return 0;
+    if (mulib_json_typeof(minor)!=MULIB_JSON_NULL) {
+        const char *amount=shy_text(row,"normalized_amount");
+        if (!*amount) amount=shy_text(row,"amount_text");
+        mulib_money_t money;
+        if (scale<0 || shy_integer(row,"minor",INT64_C(1000000000000))<0 ||
+            !mulib_money_parse(amount,shy_text(row,"currency"),(uint8_t)scale,&money) ||
+            money.minor!=shy_integer(row,"minor",INT64_C(1000000000000))) return 0;
+    }
     if (!shy_add(row, "capture_id", mulib_json_string(capture_id)) ||
         !shy_add(row, "extractor_version", mulib_json_string(plugin->version)) ||
         !shy_add(row, "span_blake3", mulib_json_string(digest)) ||
         !shy_add(row, "scale", scale < 0 ? mulib_json_new(MULIB_JSON_NULL) : mulib_json_number(scale)) ||
-        !shy_add(row, "status", mulib_json_string("needs_review"))) return 0;
+         !shy_add(row, "status", mulib_json_string("needs_review"))) return 0;
+    const char *configuration=shy_plugin_configuration(plugin);
+    if (configuration) {
+        shy_digest(configuration,strlen(configuration),digest);
+        if (!shy_add(row,"plugin_configuration_blake3",mulib_json_string(digest))) return 0;
+    }
     static const char *const unknown[] = { "listing_id", "stay_start", "stay_end", "guests" };
     mulib_json_t *unresolved = mulib_json_new(MULIB_JSON_ARRAY);
     if (!unresolved) return 0;
@@ -117,7 +108,9 @@ mulib_json_t *shy_capture_record(const char *html, size_t length, const char *ur
         !shy_add(out, "site_rule_source", mulib_json_string(rules)) ||
         !shy_add(out, "model_reply_source", mulib_json_string(model))) goto fail;
     shy_capture input = { html, length, url, "", "", digest, rules, model, diagnostics };
-    if (!plugin->extract(&input, items)) goto fail;
+    const char *configuration=shy_plugin_configuration(plugin);
+    if (configuration && !shy_add(out,"plugin_configuration",mulib_json_string(configuration))) goto fail;
+    if (!shy_plugin_extract(plugin, &input, items) || mulib_json_size(items)>256 || mulib_json_size(diagnostics)>64) goto fail;
     for (size_t i = 0; i < mulib_json_size(items); ++i)
         if (!identify_candidate(mulib_json_at(items, i), html, length, capture_id, plugin)) goto fail;
     if (!mulib_json_set(out, "candidates", items)) goto fail;

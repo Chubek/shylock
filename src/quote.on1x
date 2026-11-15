@@ -1,0 +1,89 @@
+extern fn shy_money_operation(operation:string,a:i64,b:i64,denominator:i64,currency:string,scale:i64)->i64;
+
+fn charges_valid(section:string)->bool {
+  if !@fields("closed",section,-1,"nights:integer","cleaning_minor:integer","other_fees_minor:integer",
+    "tax_bp:integer","tax_mode:string","tax_scope:string") { return false; }
+  let mode=shy_document_text(section,-1,"tax_mode");
+  let scope=shy_document_text(section,-1,"tax_scope");
+  let nights=shy_document_number(section,-1,"nights");
+  return nights>=1 && nights<=365 && shy_document_number(section,-1,"tax_bp")<=10000 &&
+    (mode=="inclusive" || mode=="exclusive") && (scope=="accommodation" || scope=="accommodation_and_fees");
+}
+
+fn quote_json(section:string,rate:i64,currency:string,scale:i64)->(i64,string) {
+  if rate<0 || rate>1000000000000 || scale<0 || scale!=shy_money_scale(currency) || !charges_valid(section) {
+    return (shy_error("invalid quote money, currency, scale or charge rules"),"");
+  }
+  let nights=shy_document_number(section,-1,"nights");
+  let tax_bp=shy_document_number(section,-1,"tax_bp");
+  let mode=shy_document_text(section,-1,"tax_mode");
+  let scope=shy_document_text(section,-1,"tax_scope");
+  let accommodation=shy_money_operation("scale",rate,nights,1,currency,scale);
+  let fees=shy_money_operation("add",shy_document_number(section,-1,"cleaning_minor"),
+    shy_document_number(section,-1,"other_fees_minor"),1,currency,scale);
+  let subtotal=shy_money_operation("add",accommodation,fees,1,currency,scale);
+  if accommodation<0 || fees<0 || subtotal<0 { return (shy_error("quote amount overflow or limit exceeded"),""); }
+  var taxable=accommodation;
+  if scope=="accommodation_and_fees" { taxable=subtotal; }
+  var denominator=10000;
+  if mode=="inclusive" { denominator=10000+tax_bp; }
+  let tax=shy_money_operation("scale",taxable,tax_bp,denominator,currency,scale);
+  var total=subtotal;
+  var net=subtotal;
+  if mode=="inclusive" { net=shy_money_operation("sub",subtotal,tax,1,currency,scale); }
+  else { total=shy_money_operation("add",subtotal,tax,1,currency,scale); }
+  if tax<0 || total<0 || net<0 { return (shy_error("quote tax overflow or limit exceeded"),""); }
+  let rules=text_concat("",shy_document_json_at(section,-1,""));
+  if rules=="" { return (shy_error("cannot serialize quote charges"),""); }
+  let out=buffer_new();
+  buffer_append(out,"{\"schema\":\"shylock.quote/v1\",\"kind\":\"stay_quote\",\"rounding\":\"aggregate-half-up/v1\",");
+  demand_member!(out,"mulib_revision",shy_runtime_revision());
+  demand_member!(out,"currency",currency);
+  buffer_append(out,"\"scale\":"); buffer_append(out,SX.sexpr_nat(scale));
+  buffer_append(out,",\"rate_minor\":"); buffer_append(out,SX.sexpr_nat(rate));
+  buffer_append(out,",\"charges\":"); buffer_append(out,rules);
+  buffer_append(out,",\"accommodation_minor\":"); buffer_append(out,SX.sexpr_nat(accommodation));
+  buffer_append(out,",\"fees_minor\":"); buffer_append(out,SX.sexpr_nat(fees));
+  buffer_append(out,",\"taxable_minor\":"); buffer_append(out,SX.sexpr_nat(taxable));
+  buffer_append(out,",\"tax_minor\":"); buffer_append(out,SX.sexpr_nat(tax));
+  buffer_append(out,",\"subtotal_ex_tax_minor\":"); buffer_append(out,SX.sexpr_nat(net));
+  buffer_append(out,",\"total_minor\":"); buffer_append(out,SX.sexpr_nat(total)); buffer_byte(out,125);
+  return (0,buffer_text(out));
+}
+
+fn stay_quote(path:string)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read quote input JSON"); }
+  var result=2;
+  if @fields("closed","",-1,"schema:string","currency:string","scale:integer","rate_minor:integer","charges:object") &&
+     shy_document_text("",-1,"schema")=="shylock.quote-input/v1" {
+    let (status,text)=quote_json("charges",shy_document_number("",-1,"rate_minor"),
+      shy_document_text("",-1,"currency"),shy_document_number("",-1,"scale"));
+    result=status;
+    if status==0 { result=shy_document_seal(text,"quote_id",1); }
+  } else { shy_error("invalid quote input schema or fields"); }
+  shy_document_close();
+  return result;
+}
+
+# Validated Gregorian dates are converted to ordinal days, not subtracted as
+# YYYYMMDD integers. This covers month/year/leap boundaries without time zones.
+fn pricing_day(date:string)->i64 {
+  let encoded=shy_date(date);
+  if encoded<0 { return -1; }
+  let year=encoded/10000;
+  let month=(encoded/100)%100;
+  let day=encoded%100;
+  let prior=year-1;
+  var days=365*prior+prior/4-prior/100+prior/400;
+  var m=1;
+  while m<month {
+    var length=31;
+    if m==4 || m==6 || m==9 || m==11 { length=30; }
+    if m==2 {
+      length=28;
+      if year%4==0 && (year%100!=0 || year%400==0) { length=29; }
+    }
+    days=days+length; m=m+1;
+  }
+  return days+day;
+}

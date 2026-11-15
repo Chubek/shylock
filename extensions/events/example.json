@@ -1,0 +1,8 @@
+{
+  "schema": "shylock.extension-events/v1",
+  "events": [
+    {"event":"decision.created","payload":{"status":"adjusted","reference_minor":18000,"adjusted_minor":20700}},
+    {"event":"decision.created","payload":{"status":"adjusted","reference_minor":18000,"adjusted_minor":20700}},
+    {"event":"decision.created","payload":{"status":"formula_error","reference_minor":18000,"adjusted_minor":null}}
+  ]
+}

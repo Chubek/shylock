@@ -1,0 +1,10 @@
+{
+  "schema": "shylock.report-template/v1",
+  "title": "Shylock formula checks",
+  "blocks": [
+    {"kind":"section","level":1,"text":"Results"},
+    {"kind":"paragraph","text":"Contract: {{/contract}}. Passed: {{/passed}}. Failed: {{/failed}}. Case set: {{/cases_id}}."},
+    {"kind":"paragraph","text":"First case: {{/cases/0/name}}. Outcome: {{/cases/0/status}}. Expected minor units: {{/cases/0/input/expected_minor}}. Actual: {{/cases/0/adjusted_minor}}."},
+    {"kind":"paragraph","text":"Data identifier: {{$data_id}}. Template identifier: {{$template_id}}."}
+  ]
+}

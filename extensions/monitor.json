@@ -1,0 +1,8 @@
+{
+  "schema": "shylock.extensions/v1",
+  "extensions": [{
+    "manifest": "monitor/manifest.json",
+    "grant": ["log", "kv.read", "kv.write"],
+    "storage": "monitor-state.db"
+  }]
+}

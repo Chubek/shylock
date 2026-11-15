@@ -1,0 +1,8 @@
+{
+  "schema": "shylock.formula-cases/v1",
+  "cases": [
+    {"name":"weekday discount","reference_minor":18000,"weekend":false,"premium_bp":1500,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":15300},
+    {"name":"weekend unchanged","reference_minor":18000,"weekend":true,"premium_bp":1500,"floor_minor":10000,"cap_minor":30000,"tick_minor":100,"expected_minor":18000},
+    {"name":"floor is authoritative","reference_minor":18000,"weekend":false,"premium_bp":10000,"floor_minor":10001,"cap_minor":30000,"tick_minor":100,"expected_minor":10100}
+  ]
+}

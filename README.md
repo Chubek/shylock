@@ -46,6 +46,7 @@ The normal CLI does not require a worker at runtime when isolation is off.
 ```sh
 ./shylock discover google 'lake cottage' tests/fixtures/google.html
 ./shylock discover bing 'lake cottage' tests/fixtures/bing.html
+./shylock discover-many plugins/dragnet/offline-job.json
 ./shylock extract tests/fixtures/rental.html https://example.org/cottage \
   1760000000 tests/fixtures/rule.json
 ```
@@ -57,6 +58,14 @@ are returned as URLs for selection by the caller. A provider with changed
 markup can produce `no_parsed_hits`. Live providers may block programmatic
 requests. Set `SHY_PROVIDER_ROOT` to select another trusted directory of
 `.elvs` files.
+
+Dragnet now combines On1x provider/outcome policy and batch admission with C11
+MuLIB adapters. Discovery retains the exact upstream provider program and
+response; `discover-replay` verifies it without network access. `snapshot` stores
+timestamped, content-identified page JSON, and `extract-snapshot` validates and
+processes that source. Live transport bounds DNS/I/O, rejects private addresses,
+pins public IPv4 answers and disables proxies/redirects while keeping TLS checks.
+See [Dragnet commands, extraction versions and trust contracts](manual/dragnet.md).
 
 Deterministic extraction walks JSON-LD offer paths, scans visible text for
 ISO-currency amounts and explicit English rate labels, and optionally uses a
@@ -125,6 +134,7 @@ accounting workbook. See [worksheet controls and scripted rendering](manual/work
 ```sh
 SHY_EXTENSIONS=extensions/example.json ./shylock estimate tests/fixtures/series.json 1
 ./shylock extension extensions/example.json decision.created decision.json
+./shylock extension-replay extensions/monitor.json extensions/events/example.json
 ```
 
 Extensions are opt-in and loaded independently of native extractor plugins.
@@ -137,6 +147,12 @@ Hooks cannot change a forecast, review, worksheet cell or formula environment.
 Formula restrictions and `adjust_rate/v1` remain unchanged. See
 [the extension contract](manual/extensions.md) for grants, lifetime, failure
 semantics and the trusted-code limitation.
+
+Saved-event replay validates the complete batch in On1x before loading any hook,
+then delivers events in one Mune lifecycle with separate per-hook transactions.
+The monitor example demonstrates durable duplicate checkpoints and formula-error
+counters without granting price mutation. `report.created` and `demand.created`
+are also available as opt-in completion events.
 
 ### Optional Linux process sandboxes
 
@@ -197,15 +213,110 @@ the optional process backend adds the boundary described above. Effectful extens
 lifecycle and permissions, never this formula environment. Formula failures return exit 2 and
 preserve the reference and any preceding forecast in the result.
 
+```sh
+./shylock formula-test formulas/weekend.lua formulas/cases/weekend.json
+./shylock formula-test formulas/weekday-discount.lua formulas/cases/weekday-discount.json
+./shylock formula-test formulas/capped-weekend.lua formulas/cases/capped-weekend.json
+```
+
+On1x owns the case-suite policy and shares adjustment bounds/ticks with `adjust`
+and `recommend`. Every case uses a fresh restricted Mune state, including in
+the optional process backend. Results retain inputs, source/runtime provenance,
+expected errors and pass/fail outcomes. See [formulas and examples](manual/formulas.md).
+
+### Booking-outcome demand
+
+```sh
+./shylock demand tests/fixtures/booking-outcomes.json 1800000000 10 2 > demand.json
+./shylock optimize demand.json 10000 20000 100 2000
+```
+
+The On1x demand policy derives per-rate booking shares from explicit finalized
+listing-night outcomes, with a chronological cutoff, minimum sample requirement,
+corroboration and conflict handling. Versioned artifacts retain source records
+and replay before optimization; results preserve their demand lineage. Asking
+prices and calendar unavailability are never treated as bookings. Legacy demand
+arrays remain supported. See [the demand contract and limitations](manual/demand.md).
+
+The build now bootstraps `src/ppx/fields.on1x`, a native On1x PPX using upstream
+`std.ppx`, for closed JSON schema checks. Hygienic macros implement shared demand
+guards and member emission; C remains the ownership/numeric-kernel adapter.
+Runtime dependencies are unchanged, with no upstream patch. Linux allocation
+fault tests require GNU/LLD linker `--wrap` support.
+
+## Print Report (LaTeX)
+
+```sh
+./shylock adjust formulas/weekend.lua 18000 1 1500 10000 30000 100 > decision.json
+./shylock print-report reports/decision.json decision.json > decision.tex
+```
+
+The On1x renderer takes a versioned JSON template, selects nested scalar fields
+using JSON Pointers, and produces an escaped LaTeX article using MuLIB's `latex`
+kernel. Supplied templates cover decisions, forecasts and formula-test summaries.
+Validation/render failures produce no partial article. Literal values cannot
+inject raw TeX, run formulas or load modules. A successful report can emit a
+metadata-only extension event.
+
+Output is `.tex` source, **not PDF or a physical printer job**. TeX compilation
+and printing are explicit external steps; generating reports needs no TeX
+installation or new external runtime dependency. The GNU Make helper still owns
+one MuLIB implementation translation unit; no upstream patch is required. See
+[template syntax, limits and printing](manual/reports.md).
+
+## Evaluated pricing policies
+
+```sh
+./shylock forecast tests/fixtures/series.json policies/forecast.json
+./shylock forecast tests/fixtures/seasonal-history.json policies/seasonal.json
+./shylock optimize-model policies/model.json
+./shylock quote policies/quote.json
+./shylock price cohort.json policies/pricing.json
+```
+
+On1x now owns configurable model admission, rolling windows, disjoint chronological
+selection/holdout evaluation, empirical error bands, movement/margin/tick guards,
+tax/fee scope and a unified cohort-to-price workflow. C adapters call MuLIB
+histprice, statsprice, priceopt and checked money kernels and retain audit owners.
+Forecast policies support EMA, Holt, seasonal Holt-Winters, Kalman, AR(1), robust
+trend and last/median baselines. Scenario optimization supports caller-specified
+linear, isoelastic and logistic demand, weights and explicit risk aversion.
+
+`price` requires a reviewed cohort with matching stay/currency/tax/fee context;
+optional demand artifacts are replayed before use. Forecast, formula adjustment,
+demand recommendation and stay quote remain distinct and auditable, including on
+failure. Output is a proposal, not an automatic rate publication. Objective scores
+use quoted-nightly-rate units, not after-tax accounting profit. The `as_of` checks
+capture/finalization timestamps, not historical availability of review revisions.
+Legacy pricing commands and formats remain compatible. See [pricing contracts,
+limits and examples](manual/pricing.md); `reports/pricing.json` and
+`reports/evaluated-forecast.json` typeset successful new results. No new external
+dependency or upstream interface migration is required.
+
+For a complete synthetic saved-page workflow, creating a new audit directory:
+
+```sh
+python3 examples/offline-pricing.py /tmp/shylock-pricing-example
+```
+
+It refuses to overwrite an existing directory and uses no network or model service.
+
 ## Plugin boundary
 
-`src/shylock.h` defines extractor ABI v2 and `src/registry.c` negotiates compiled
-descriptors. Registration checks ABI, descriptor size, unique names and callbacks.
-An extractor receives borrowed immutable input and appends owned candidates to a
-host-owned array; failure discards all output. `./shylock plugins` lists registered
-extractors. Native tests exercise a second extractor, incompatible descriptors
-and callback failure. Poindexter storage is a separate compiled adapter, not an
-extractor. Shared-library loading and automatic offer acceptance are not provided.
+`include/shylock-sdk.h` is a standalone C11 SDK with version/size negotiation,
+copied typed output, host allocation/digest callbacks and explicit load/extract/
+unload lifetimes. `SHY_NATIVE_PLUGINS` opts into a versioned configuration of
+trusted shared libraries. Failed loads roll back the batch; a failed sink callback
+poisons the entire extraction even if ignored by the plugin. Configuration and
+its digest remain in capture/evidence provenance. No MuLIB implementation macros
+or executable-exported host symbols are needed by a plugin.
+
+Build the example with `make build/fixed-price.so`. See [SDK configuration,
+ownership, examples and ABI migration](manual/sdk.md). Existing compiled extractor
+ABI v2 remains supported. `./shylock plugins` lists both kinds. **Native libraries
+are trusted code, not sandboxed extensions**; loading can execute constructors.
+Formula/process isolation does not sandbox them. Automatic offer acceptance is
+not provided; Poindexter storage remains a separate compiled adapter.
 
 ## Poindexter progress
 
@@ -217,7 +328,8 @@ provenance explicitly distinguished from the verified workflow.
 
 This implements the next evidence/review/pricing milestones, not the entire
 `AGENTS.md` roadmap. Poindexter now has a shared worksheet TUI/GUI and effectful
-Mune extensions with scoped log/KV capabilities. Dynamic native loading, live
-model calls and browser automation remain future work. Transport
-still needs DNS/address-validation hardening before unattended acquisition.
+Mune extensions with scoped log/KV capabilities. Dynamic native extractor loading
+and DNS-pinned bounded Dragnet acquisition are implemented. Direct model-service
+calls, browser automation and policy-compliant unattended scheduling remain
+separate work, not implicit permissions granted by native SDK configuration.
 No live-provider checks are claimed by the offline test suite.

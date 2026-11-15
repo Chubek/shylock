@@ -1,0 +1,51 @@
+extern fn shy_extensions_enqueue_json(event:string,payload:string)->i64;
+extern fn shy_extension_replay_begin(configuration:string)->i64;
+extern fn shy_extension_replay_send(event:string,payload:string)->i64;
+extern fn shy_extension_replay_end(batch:string)->i64;
+
+fn extension_event_known(event:string)->bool {
+  return event=="capture.extracted" || event=="observation.reviewed" || event=="cohort.created" ||
+    event=="forecast.created" || event=="decision.created" || event=="optimization.created" ||
+    event=="worksheet.opened" || event=="worksheet.saved" || event=="report.created" || event=="demand.created";
+}
+
+# Validate and copy the complete batch before on_load can cause any effects.
+# A batch is an explicit saved-event replay, never a grant to mutate domain data.
+fn extension_replay(configuration:string,path:string)->i64 {
+  if configuration=="" || shy_document_open(path)!=1 { return shy_error("cannot read extension replay batch"); }
+  var result=0;
+  var deliveries=sx_nil();
+  if !@fields("closed","",-1,"schema:string","events:array") ||
+     shy_document_text("",-1,"schema")!="shylock.extension-events/v1" {
+    result=shy_error("invalid extension replay schema or fields");
+  }
+  let count=shy_document_size("",-1,"events");
+  if result==0 && (count<1 || count>32) { result=shy_error("extension replay needs 1..32 events"); }
+  var i=0;
+  while result==0 && i<count {
+    if !@fields("closed","events",i,"event:string","payload:object") ||
+       !extension_event_known(shy_document_text("events",i,"event")) {
+      result=shy_error("invalid extension replay envelope or unknown event");
+    } else {
+      let payload=shy_document_json_at("events",i,"payload");
+      if payload=="" || text_len(payload)>1048576 { result=shy_error("extension replay payload exceeds 1 MiB"); }
+      else {
+        let item=sx_cons(sx_string(shy_document_text("events",i,"event")),sx_cons(sx_string(payload),sx_nil()));
+        deliveries=List.basis_list_cons(item,deliveries);
+      }
+    }
+    i=i+1;
+  }
+  let batch=text_concat("",shy_document_json());
+  if result==0 && batch=="" { result=shy_error("extension replay batch exceeds serialization limits"); }
+  shy_document_close();
+  if result!=0 { return result; }
+  shy_extension_replay_begin(configuration);
+  var rest=List.basis_list_rev(deliveries);
+  while sx_kind(rest)==3 {
+    let item=sx_head(rest);
+    shy_extension_replay_send(sx_text(sx_head(item)),sx_text(SX.sexpr_nth(item,1)));
+    rest=sx_tail(rest);
+  }
+  return shy_extension_replay_end(batch);
+}

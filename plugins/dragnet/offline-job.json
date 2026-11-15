@@ -1,0 +1,1 @@
+{"schema":"shylock.discovery-job/v1","query":"lake cottage","limit":10,"allow_network":false,"providers":[{"name":"google","capture":"../../tests/fixtures/google.html"},{"name":"bing","capture":"../../tests/fixtures/bing.html"}]}
