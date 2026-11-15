@@ -5,6 +5,7 @@ extern fn shy_native_document_test()->i64;
 extern fn shy_native_latex_test()->i64;
 extern fn shy_native_engine_test()->i64;
 extern fn shy_native_dragnet_test()->i64;
+extern fn shy_native_intelligence_test()->i64;
 extern fn shy_formula(path:string,reference:i64,weekend:i64,premium:i64)->i64;
 
 fn main()->i64 {
@@ -15,6 +16,7 @@ fn main()->i64 {
   if shy_native_latex_test()!=1 { return 1; }
   if shy_native_engine_test()!=1 { return 1; }
   if shy_native_dragnet_test()!=1 { return 1; }
+  if shy_native_intelligence_test()!=1 { return 1; }
   # Two evaluations in the SAME process must not retain formula globals.
   if shy_formula("tests/fixtures/fresh.lua",10000,0,0)!=10001 { return 1; }
   if shy_formula("tests/fixtures/fresh.lua",10000,0,0)!=10001 { return 1; }

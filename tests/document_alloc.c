@@ -4,6 +4,7 @@
 #include "../src/latex.h"
 #include "../src/engine.h"
 #include "../plugins/dragnet/workflow.h"
+#include "../plugins/dragnet/intelligence.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,8 @@ int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,
 int64_t shy_emit(mulib_json_t *record) { mulib_json_destroy(record); return 2; }
 int shy_extensions_enqueue(const char *event, const mulib_json_t *payload)
 { (void)event; (void)payload; return 1; }
+static int unavailable_tls(void *context,const mulib_uri_t *endpoint,mulib_tsl_t *out)
+{ (void)context; (void)endpoint; (void)out; return 0; }
 
 int64_t shy_document_allocation_test(void)
 {
@@ -111,6 +114,37 @@ int64_t shy_document_allocation_test(void)
         }
         fault=0; reached+=injected;
         shy_dragnet_batch_close(); shy_dragnet_batch_close();
+    }
+    const char html[]="<main><p>EUR 180.00 per night</p></main>";
+    mulib_json_t *snapshot=shy_snapshot_record(html,strlen(html),"https://example.org/cottage",1000,"saved",0,"text/html");
+    mulib_json_t *ir=snapshot ? shy_flatten(snapshot) : NULL;
+    const char settings[]="{\"model\":\"fixture\",\"api_key_env\":\"SHY_FAULT_TEST_OPENAI_KEY\",\"organization\":\"\",\"project\":\"\",\"input\":\"ir\",\"max_output_tokens\":1024}";
+    mulib_json_t *profile=mulib_json_parse(settings,strlen(settings),NULL);
+    const char *prior=getenv("SHY_FAULT_TEST_OPENAI_KEY"); char *saved=prior ? strdup(prior) : NULL;
+    if (setenv("SHY_FAULT_TEST_OPENAI_KEY","fake-key-no-network",1)) ok=0;
+    if (!snapshot || !ir || !profile) ok=0;
+    for (size_t at=1;ok && at<=1536;++at) {
+        calls=0; injected=0; fault=at;
+        mulib_json_t *result=shy_flatten(snapshot);
+        fault=0; reached+=injected; mulib_json_destroy(result);
+        calls=0; injected=0; fault=at;
+        result=shy_find_information(ir,"prices");
+        fault=0; reached+=injected; mulib_json_destroy(result);
+        calls=0; injected=0; fault=at;
+        int success=0;
+        result=shy_model_information(ir,profile,"prices",unavailable_tls,NULL,&success);
+        fault=0; reached+=injected;
+        if (success) ok=0; /* Never invent successful model work after failure. */
+        mulib_json_destroy(result);
+    }
+    if (saved) { setenv("SHY_FAULT_TEST_OPENAI_KEY",saved,1); free(saved); } else unsetenv("SHY_FAULT_TEST_OPENAI_KEY");
+    mulib_json_destroy(snapshot); mulib_json_destroy(ir); mulib_json_destroy(profile);
+    const char job[]="{\"start_url\":\"https://example.org/search\",\"captured_at\":1000,\"allow_network\":false,\"pages\":[{\"url\":\"https://example.org/search\",\"path\":\"tests/fixtures/browser-start.html\"}]}";
+    for (size_t at=1;ok && at<=512;++at) {
+        calls=0; injected=0; fault=at;
+        if (!shy_browser_begin(job,".")) (void)shy_browser_step("assert","h1","Saved listings");
+        (void)shy_browser_finish(0);
+        fault=0; reached+=injected; shy_browser_close(); shy_browser_close();
     }
     return ok && reached > 50;
 }

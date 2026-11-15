@@ -179,9 +179,8 @@ not infer fees, taxes, stays, listing identity or acceptance from a price alone.
 Externally generated model replies remain optional, capture-digest-bound,
 exact-quote-validated and **review-only**. Invalid replies are transactional and
 leave deterministic results with an explicit diagnostic. This implementation
-does not add direct model-service calls or browser automation. Those require
-separate authenticated transports/permissions and verification, not a hidden
-side effect of searching or extracting a page. Native SDK loading is independent
+now has separate opt-in [static browser, IR and direct OpenAI workflows](intelligence.md).
+They are not hidden side effects of searching or extracting a page. Native SDK loading is independent
 of Mune formulas/effectful extensions; see [the C11 SDK](sdk.md).
 
 ## Verification

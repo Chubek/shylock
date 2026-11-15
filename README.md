@@ -16,6 +16,9 @@ a C11 compiler, and a C++20 compiler. The Makefile builds On1x using its
 upstream bootstrap scanner, or accepts `ON1XC=/path/to/on1xc` for an existing
 compiler. The CLI uses POSIX shell and process APIs. Live HTTPS uses curl for
 transport and certificate validation. The fixture workflow needs no network.
+Direct OpenAI calls additionally require OpenSSL development headers/libraries
+(`libssl`, `libcrypto`, detected with `pkg-config openssl`) for the authenticated
+TLS adapter beneath MuLIB's OpenAI client. Credentials are runtime-only.
 The terminal worksheet uses MuLIB TUI/termkey. The graphical worksheet uses
 MuLIB ImmGTK/GLX with an SDL2 window adapter, detected using `pkg-config`.
 Install SDL2 development files and build with `GUI=1` to require native windows;
@@ -34,7 +37,8 @@ make test
 
 ```sh
 make -j4 test BUILD=build-sanitized ON1XC="$PWD/build/on1xc" \
-  CC=clang CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g'
+  CC=clang CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' \
+  PPX_TIMEOUT_MS=60000
 ```
 
 The build also produces the companion `shylock-worker` executable. Keep it beside
@@ -86,7 +90,52 @@ quoted bytes and amount presence. A matching quote establishes provenance.
 Model interpretation remains review-only. Invalid or unreadable model replies
 leave deterministic candidates available and add a `model_reply_invalid`
 diagnostic instead of failing the entire extraction. Generate replies with the
-model client of your choice. The CLI does not call a model service directly.
+model client of your choice, or use the explicit MuLIB OpenAI workflow below.
+Ordinary extraction never calls a model implicitly.
+
+## Browser automation, flat page IR and OpenAI
+
+```sh
+./shylock browse plugins/dragnet/browser-job.json > browser.json
+./shylock flatten browser.json > page-ir.json
+./shylock find page-ir.json prices
+./shylock find page-ir.json parking
+./shylock openai-account plugins/dragnet/openai-profile.json
+```
+
+The pinned MuLIB browser engine supports **static HTML** navigation, link
+following, DOM reads and assertions—not JavaScript execution or Chromium.
+On1x admits complete bounded jobs; C11 owns browser lifetimes and same-origin,
+DNS-pinned acquisition. Saved-page jobs remain fully offline.
+
+MuLIB HTML/readability kernels produce a flat, noise-filtered block IR retaining
+the immutable page and original byte ranges. Local `find` scans canonical
+currency/price tokens or literal target text without a model. Unknown currency,
+rate scope and qualifiers remain explicit, and every result requires review.
+
+To connect an **OpenAI Platform API account**, set the environment variable named
+by the profile through your secret manager; never put a key in the profile or
+repository. Configure a model available to that account. `openai-account` reports
+local configuration only, not successful server authentication. Then explicitly:
+
+```sh
+./shylock model-extract page-ir.json plugins/dragnet/openai-profile.json prices --live
+```
+
+Set the standard `OPENAI_BASE_URL` environment variable to use a trusted
+Responses-compatible service instead of `https://api.openai.com/v1` (the default
+when unset or empty). Include the complete base path; `/responses` is appended.
+For example, `OPENAI_BASE_URL=https://gateway.example/v1`. Public HTTPS/address
+and certificate checks still apply; local HTTP endpoints are not enabled.
+The selected service receives the configured key and page content, and its URL
+is retained in the audit. Never put credentials in the URL.
+
+This sends content to the selected service and can incur API charges. MuLIB's `openai-client`
+performs the Responses API request with structured output; Dragnet validates exact
+source quotes before importing review-only suggestions. Credentials stay out of
+audits. Failures retain deterministic results and diagnostics. API accounts are
+not ChatGPT browser logins/subscriptions. See [browser/IR/model contracts, limits,
+security and account setup](manual/intelligence.md).
 
 ## Verified review to recommendation
 
@@ -329,7 +378,8 @@ provenance explicitly distinguished from the verified workflow.
 This implements the next evidence/review/pricing milestones, not the entire
 `AGENTS.md` roadmap. Poindexter now has a shared worksheet TUI/GUI and effectful
 Mune extensions with scoped log/KV capabilities. Dynamic native extractor loading
-and DNS-pinned bounded Dragnet acquisition are implemented. Direct model-service
-calls, browser automation and policy-compliant unattended scheduling remain
-separate work, not implicit permissions granted by native SDK configuration.
+and DNS-pinned bounded Dragnet acquisition are implemented, as are static browser
+jobs, flat IR matching and opt-in direct OpenAI calls. JavaScript browser execution,
+website login and policy-compliant unattended scheduling remain separate work,
+not implicit permissions granted by native SDK configuration.
 No live-provider checks are claimed by the offline test suite.

@@ -1,0 +1,94 @@
+extern fn shy_flatten_command(path:string)->i64;
+extern fn shy_find_command(path:string,target:string)->i64;
+extern fn shy_openai_account(profile:string)->i64;
+extern fn shy_model_command(path:string,profile:string,target:string)->i64;
+extern fn shy_browser_begin(job:string,directory:string)->i64;
+extern fn shy_browser_step(action:string,selector:string,value:string)->i64;
+extern fn shy_browser_finish(success:i64)->i64;
+extern fn shy_browser_close()->i64;
+
+fn openai_profile_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","model:string","api_key_env:string","organization:string","project:string","input:string","max_output_tokens:integer") ||
+    shy_document_text("",-1,"schema")!="shylock.openai-profile/v1" { return false; }
+  let model=shy_document_text("",-1,"model");
+  let name=shy_document_text("",-1,"api_key_env");
+  let mode=shy_document_text("",-1,"input");
+  let tokens=shy_document_number("",-1,"max_output_tokens");
+  if model=="" || text_len(model)>128 || name=="" || text_len(name)>128 || tokens<256 || tokens>4096 ||
+    text_len(shy_document_text("",-1,"organization"))>128 || text_len(shy_document_text("",-1,"project"))>128 ||
+    (mode!="ir" && mode!="html") { return false; }
+  var i=0;
+  while i<text_len(name) {
+    let c=text_byte(name,i);
+    if !((c>=65 && c<=90) || c==95 || (i>0 && c>=48 && c<=57)) { return false; }
+    i=i+1;
+  }
+  return true;
+}
+fn openai_profile(path:string,source:string,target:string,live:bool)->i64 {
+  if target=="" || text_len(target)>256 { return shy_error("a target of 1..256 bytes is required"); }
+  if shy_document_open(path)!=1 { return shy_error("cannot read OpenAI profile"); }
+  if !openai_profile_valid() { shy_document_close(); return shy_error("invalid OpenAI profile; secrets belong in the named environment variable"); }
+  let profile=text_concat("",shy_document_json());
+  shy_document_close();
+  if live { return shy_model_command(source,profile,target); }
+  return shy_openai_account(profile);
+}
+fn browser_selector_valid(selector:string)->bool {
+  if selector=="" || text_len(selector)>128 { return false; }
+  if selector=="*" { return true; }
+  var i=0;
+  if text_byte(selector,0)==35 || text_byte(selector,0)==46 { i=1; }
+  if i==text_len(selector) { return false; }
+  while i<text_len(selector) {
+    let c=text_byte(selector,i);
+    if !((c>=65 && c<=90) || (c>=97 && c<=122) || (c>=48 && c<=57) || c==45 || c==95 || c==58) { return false; }
+    i=i+1;
+  }
+  return true;
+}
+fn browser_job_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","start_url:string","captured_at:integer","allow_network:boolean","pages:array","steps:array") ||
+    shy_document_text("",-1,"schema")!="shylock.browser-job/v1" ||
+    shy_document_number("",-1,"captured_at")>253402300799 { return false; }
+  let pages=shy_document_size("",-1,"pages"); let steps=shy_document_size("",-1,"steps");
+  if pages>32 || steps<1 || steps>16 || shy_document_text("",-1,"start_url")=="" ||
+    text_len(shy_document_text("",-1,"start_url"))>4096 { return false; }
+  var i=0;
+  while i<pages {
+    if !@fields("closed","pages",i,"url:string","path:string") || shy_document_text("pages",i,"path")=="" ||
+      text_len(shy_document_text("pages",i,"path"))>4096 || shy_document_text("pages",i,"url")=="" ||
+      text_len(shy_document_text("pages",i,"url"))>4096 { return false; }
+    var j=0;
+    while j<i { if shy_document_text("pages",i,"url")==shy_document_text("pages",j,"url") { return false; } j=j+1; }
+    i=i+1;
+  }
+  i=0;
+  while i<steps {
+    if !@fields("closed","steps",i,"action:string","selector:string","value:string") { return false; }
+    let action=shy_document_text("steps",i,"action");
+    let selector=shy_document_text("steps",i,"selector"); let value=shy_document_text("steps",i,"value");
+    if text_len(value)>4096 { return false; }
+    if action=="navigate" { if selector!="" || value=="" { return false; } }
+    else { if action!="follow" && action!="read" && action!="assert" { return false; }
+      if !browser_selector_valid(selector) || (action!="assert" && value!="") || (action=="assert" && value=="") { return false; }
+    }
+    i=i+1;
+  }
+  return true;
+}
+fn browser_run(path:string)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read browser job"); }
+  if !browser_job_valid() { shy_document_close(); return shy_error("invalid static browser job, action or selector"); }
+  let count=shy_document_size("",-1,"steps");
+  var success=1;
+  if shy_browser_begin(shy_document_json(),Path.basis_path_dir(path))!=0 { success=0; }
+  var i=0;
+  while success==1 && i<count {
+    if shy_browser_step(shy_document_text("steps",i,"action"),shy_document_text("steps",i,"selector"),shy_document_text("steps",i,"value"))!=0 { success=0; }
+    i=i+1;
+  }
+  shy_document_close();
+  let result=shy_browser_finish(success);
+  shy_browser_close(); return result;
+}

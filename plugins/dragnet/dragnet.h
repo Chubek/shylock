@@ -16,4 +16,5 @@ int shy_dragnet_public_ipv4(const unsigned char address[4]);
 int shy_dragnet_url_host(const char *url, char host[256]);
 int shy_dragnet_get(const char *, mulib_fetch_transport_fn, void *, mulib_shylock_buffer_t *, unsigned *, char *, size_t);
 int shy_dragnet_html_type(const char *);
+int shy_dragnet_resolve(const char *,char address[16]);
 #endif

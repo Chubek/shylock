@@ -17,6 +17,10 @@ $(error GUI=1 requires SDL2 development files and pkg-config)
 endif
 endif
 GUI_FLAGS := $(if $(strip $(SDL_LIBS)),-DSHY_HAVE_SDL2=1,-DSHY_HAVE_SDL2=0) $(SDL_CFLAGS) $(SDL_LIBS)
+OPENAI_TLS_FLAGS := $(shell pkg-config --cflags --libs openssl 2>/dev/null)
+ifeq ($(strip $(OPENAI_TLS_FLAGS)),)
+OPENAI_TLS_FLAGS := -lssl -lcrypto
+endif
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
 
@@ -41,12 +45,13 @@ $(BUILD)/compiler/%.o: $(ON1X)/src/%.cpp $(BUILD)/ppx_schema.hpp
 $(BUILD)/on1xc: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
-KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex
+KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex readability browser-engine browserlocator dom-query openai-client
 VM_NATIVE := src/record.c src/mune_vm.c src/sandbox.c src/sandbox_os.c
-NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/document.c src/engine.c src/context.c src/latex.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c $(VM_NATIVE)
-HEADERS := src/shylock.h include/shylock-sdk.h plugins/dragnet/dragnet.h plugins/dragnet/workflow.h src/document.h src/engine.h src/latex.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
+INTELLIGENCE_NATIVE := plugins/dragnet/flat.c plugins/dragnet/browser.c plugins/dragnet/openai.c plugins/dragnet/openai_tls.c
+NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/document.c src/engine.c src/context.c src/latex.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c $(INTELLIGENCE_NATIVE) $(VM_NATIVE)
+HEADERS := src/shylock.h include/shylock-sdk.h plugins/dragnet/dragnet.h plugins/dragnet/workflow.h plugins/dragnet/intelligence.h src/document.h src/engine.h src/latex.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
 $(BUILD)/native-config.json: FORCE tools/native_config.py
-	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(GUI_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)"
+	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(GUI_FLAGS) $(OPENAI_TLS_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)"
 
 PPX_LIB := $(wildcard $(ON1X)/stdlib/ppx/*.on1x) $(ON1X)/stdlib/sexpr/sexpr.on1x $(ON1X)/stdlib/visitor/visitor.on1x
 PPX_TIMEOUT_MS ?= 30000
@@ -64,6 +69,7 @@ $(BUILD)/shylock: $(wildcard src/*.on1x) $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) \
 	  $(foreach flag,$(GUI_FLAGS),--cflag=$(flag)) \
 	  --cflag=-ldl \
+	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
 	  $(foreach file,$(NATIVE),--extra-c $(file)) -o "$@"
 
@@ -79,15 +85,16 @@ $(BUILD)/shylock-worker: src/worker.on1x src/worker.c $(VM_NATIVE) $(HEADERS) $(
 	  --mulib mune --mulib json --mulib cryptohash \
 	  $(foreach file,$(VM_NATIVE) src/worker.c,--extra-c $(file)) -o "$@"
 
-$(BUILD)/native-tests: tests/native.on1x tests/native.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
+$(BUILD)/native-tests: tests/native.on1x tests/native.c tests/intelligence.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" \
 	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) \
 	  $(foreach flag,$(GUI_FLAGS),--cflag=$(flag)) \
 	  --cflag=-ldl \
+	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
-	  $(foreach file,$(NATIVE) tests/native.c,--extra-c $(file)) -o "$@"
+	  $(foreach file,$(NATIVE) tests/native.c tests/intelligence.c,--extra-c $(file)) -o "$@"
 
 $(BUILD)/sandbox-probes: tests/sandbox_probe.c src/sandbox_os.c src/sandbox.h src/mune_vm.h $(BUILD)/native-config.json Makefile
 	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WORKER_CFLAGS) -I"$(MULIB)/include" \
@@ -100,12 +107,14 @@ $(BUILD)/metaprogramming-tests: tests/metaprogramming.on1x src/demand_macros.on1
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
 
 DRAGNET_NATIVE := plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c src/registry.c src/evidence.c
-$(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c $(DRAGNET_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
+$(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c $(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" --mulib json --mulib cryptohash --mulib latex \
 	  --mulib money --mulib histprice --mulib statsprice --mulib priceopt \
 	  --mulib elvi-scrape --mulib html-jsonld --mulib html-tokenizer --cflag=-ldl \
-	  $(foreach file,$(DRAGNET_NATIVE),--extra-c $(file)) \
+	  --mulib readability --mulib browser-engine --mulib browserlocator --mulib dom-query --mulib openai-client \
+	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
+	  $(foreach file,$(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE),--extra-c $(file)) \
 	  --extra-c tests/document_alloc.c --extra-c src/document.c --extra-c src/engine.c --extra-c src/context.c --extra-c src/series.c --extra-c src/latex.c --extra-c src/record.c \
 	  --cflag=-Wl,--wrap=malloc --cflag=-Wl,--wrap=calloc --cflag=-Wl,--wrap=realloc \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
@@ -118,6 +127,7 @@ test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/me
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/engine.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" CC="$(CC)" SDK_TEST_CFLAGS="$(CFLAGS)" $(PYTHON) tests/sdk.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/dragnet.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/intelligence.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/extensions.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/calculation.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/reports.py

@@ -27,7 +27,7 @@ static int seal(mulib_json_t *out,const char *key)
 {
     char digest[65]; return shy_json_digest(out,key,digest) && shy_add(out,key,mulib_json_string(digest));
 }
-static mulib_json_t *source_record(const char *bytes,size_t length,const char *url,int64_t at,
+mulib_json_t *shy_snapshot_record(const char *bytes,size_t length,const char *url,int64_t at,
     const char *mode,unsigned status,const char *type)
 {
     char host[256],digest[65];
@@ -78,7 +78,7 @@ static int prepare(const char *provider,const char *query,const char *program_so
         shy_add(out,"effective_limit",mulib_json_number((double)((unsigned)limit<program.max_results ? (unsigned)limit : program.max_results))) &&
         shy_add(out,"http_status",status ? mulib_json_number(status) : mulib_json_new(MULIB_JSON_NULL)) &&
         shy_add(out,"error_code",mulib_json_number(code));
-    if (ok) ok=shy_add(out,"snapshot",!code ? source_record(bytes,length,url,-1,mode,status,type) : mulib_json_new(MULIB_JSON_NULL));
+    if (ok) ok=shy_add(out,"snapshot",!code ? shy_snapshot_record(bytes,length,url,-1,mode,status,type) : mulib_json_new(MULIB_JSON_NULL));
     for (size_t i=0;ok && i<count;++i) {
         mulib_json_t *hit=mulib_json_new(MULIB_JSON_OBJECT);
         ok=shy_add(hit,"url",mulib_json_string(results[i].url)) && shy_add(hit,"title",mulib_json_string(results[i].title));
@@ -169,11 +169,11 @@ int64_t shy_dragnet_snapshot(const char *url,int64_t timestamp,const char *saved
     size_t length=0; char *file=NULL; const char *bytes=NULL;
     if (*saved) bytes=file=shy_read(saved,SHY_PAGE_LIMIT,&length);
     else if (shy_dragnet_get(url,shy_dragnet_https,NULL,&body,&status,type,sizeof type) && status==200 && shy_dragnet_html_type(type)) { bytes=body.data; length=body.len; }
-    mulib_json_t *out=bytes ? source_record(bytes,length,url,timestamp,*saved ? "saved" : "https",status,type) : NULL;
+    mulib_json_t *out=bytes ? shy_snapshot_record(bytes,length,url,timestamp,*saved ? "saved" : "https",status,type) : NULL;
     free(file); mulib_shylock_buffer_free(&body);
     return out ? shy_emit(out) : shy_error("cannot capture bounded verified-HTTPS HTML snapshot");
 }
-static int snapshot_valid(const mulib_json_t *snapshot)
+int shy_snapshot_valid(const mulib_json_t *snapshot)
 {
     size_t length;
     const char *bytes=mulib_json_text(mulib_json_get(snapshot,"html"),&length);
@@ -181,7 +181,7 @@ static int snapshot_valid(const mulib_json_t *snapshot)
     int saved=!strcmp(mode,"saved");
     int64_t status=shy_integer(snapshot,"http_status",599);
     if (!bytes || (!saved && strcmp(mode,"https")) || (saved ? mulib_json_typeof(mulib_json_get(snapshot,"http_status"))!=MULIB_JSON_NULL : status!=200)) return 0;
-    mulib_json_t *rebuilt=source_record(bytes,length,shy_text(snapshot,"source_url"),
+    mulib_json_t *rebuilt=shy_snapshot_record(bytes,length,shy_text(snapshot,"source_url"),
         shy_integer(snapshot,"captured_at",INT64_C(253402300799)),mode,saved ? 0 : 200,shy_text(snapshot,"content_type"));
     int ok=rebuilt && shy_dragnet_html_type(shy_text(snapshot,"content_type")) && shy_json_equal(snapshot,rebuilt);
     mulib_json_destroy(rebuilt); return ok;
@@ -191,7 +191,7 @@ int64_t shy_dragnet_extract_snapshot(const char *path,const char *rules,const ch
     size_t length;
     char *bytes=shy_read(path,SHY_DATA_LIMIT,&length);
     mulib_json_t *snapshot=bytes ? mulib_json_parse(bytes,length,NULL) : NULL; free(bytes);
-    if (!snapshot_valid(snapshot)) { mulib_json_destroy(snapshot); return shy_error("snapshot digest, metadata or source is invalid"); }
+    if (!shy_snapshot_valid(snapshot)) { mulib_json_destroy(snapshot); return shy_error("snapshot digest, metadata or source is invalid"); }
     char *rule=*rules ? shy_read(rules,16384,&length) : NULL;
     char *reply=*model ? shy_read(model,65536,&length) : NULL;
     const char *html=shy_text(snapshot,"html");
@@ -206,7 +206,7 @@ int64_t shy_dragnet_replay(const char *path)
     char *bytes=shy_read(path,SHY_DATA_LIMIT,&length);
     mulib_json_t *record=bytes ? mulib_json_parse(bytes,length,NULL) : NULL; free(bytes);
     const mulib_json_t *snapshot=mulib_json_get(record,"snapshot");
-    if (!snapshot_valid(snapshot) || shy_integer(record,"error_code",5)!=0) { mulib_json_destroy(record); return -1; }
+    if (!shy_snapshot_valid(snapshot) || shy_integer(record,"error_code",5)!=0) { mulib_json_destroy(record); return -1; }
     int64_t limit=shy_integer(record,"requested_limit",64);
     int code=limit>=1 ? prepare(shy_text(record,"provider"),shy_text(record,"query"),shy_text(record,"provider_source"),
         shy_text(snapshot,"html"),strlen(shy_text(snapshot,"html")),shy_text(snapshot,"acquisition"),

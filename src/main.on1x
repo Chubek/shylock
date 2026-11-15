@@ -9,6 +9,7 @@ import "quote.on1x";
 import "pricing.on1x";
 import "model.on1x";
 import "dragnet.on1x";
+import "intelligence.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -39,6 +40,11 @@ fn run_command() -> i64 {
   let b = CLI.basis_command_line_get_env("SHY_2");
   let c = CLI.basis_command_line_get_env("SHY_3");
   let d = CLI.basis_command_line_get_env("SHY_4");
+  if command=="flatten" && count==1 { return shy_flatten_command(a); }
+  if command=="find" && count==2 { return shy_find_command(a,b); }
+  if command=="browse" && count==1 { return browser_run(a); }
+  if command=="openai-account" && count==1 { return openai_profile(a,"","account",false); }
+  if command=="model-extract" && count==4 && d=="--live" { return openai_profile(b,a,c,true); }
   if command=="forecast" && count==2 { return forecast(a,b); }
   if command=="quote" && count==1 { return stay_quote(a); }
   if command=="price" && (count==2 || count==3) { return price(a,b,c); }
@@ -140,6 +146,11 @@ fn run_command() -> i64 {
     println("series DATABASE COHORT CURRENCY START STEP COUNT");
     println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
     println("plugins");
+    println("browse BROWSER_JOB_JSON");
+    println("flatten SNAPSHOT_OR_IR_JSON");
+    println("find SNAPSHOT_OR_IR_JSON TARGET");
+    println("openai-account OPENAI_PROFILE_JSON");
+    println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
     println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
     println("extension-replay CONFIG_JSON EVENTS_JSON");
     println("formula-test FORMULA CASES_JSON");

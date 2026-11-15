@@ -85,7 +85,7 @@ static int collect(pid_t pid,int fd,char *buffer,size_t cap,size_t *length,int m
     *length=used;
     return ok && result==pid && WIFEXITED(status) && !WEXITSTATUS(status);
 }
-static int resolve(const char *host,char address[INET_ADDRSTRLEN])
+int shy_dragnet_resolve(const char *host,char address[INET_ADDRSTRLEN])
 {
     int fds[2]; if (pipe(fds)) return 0;
     pid_t pid=fork();
@@ -116,7 +116,7 @@ int shy_dragnet_https(void *context,const char *url,mulib_shylock_buffer_t *body
     if (!body || !status || !type || !cap || !shy_dragnet_url_host(url,host) ||
         (options && options->deadline_ms>20000)) return 0;
     memset(address,0,sizeof address);
-    int resolved=options && options->resolve ? options->resolve(options->context,host,address) : resolve(host,address);
+    int resolved=options && options->resolve ? options->resolve(options->context,host,address) : shy_dragnet_resolve(host,address);
     unsigned char raw[4];
     if (!resolved || !memchr(address,0,sizeof address) || inet_pton(AF_INET,address,raw)!=1 || !shy_dragnet_public_ipv4(raw)) return 0;
     snprintf(pin,sizeof pin,"%s:443:%s",host,address);
