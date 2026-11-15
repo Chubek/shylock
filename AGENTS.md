@@ -1,5 +1,36 @@
 # AGENTS.md — Shylock
 
+Shylock is an extensible price prediction engine, implemented using the [Mulib](https://github.com/Chubek/mulib) 
+spatio-temporally composable infrastructure. Mulib offers several 'emulsifiers'
+for its kernels and easy, safe programming (the 'space' part in spatio-temporal),
+at the moment, it offers MuLL, a very basic, terse imperative language, and On1x,
+a large, typesafe ML-like language with a vast standard library and several
+metaprogramming methods. Shylock chooses to use MuLL in a limited amount,
+but uses On1x (which is created using the author's own [libstone](https://github.com/Chubek/libstone))
+compile infrastructure) for the heavy tasks.
+
+Shylock has several means of extensibility. It ships with several plugins.
+One of these plugins is Dragnet. This plugin allows you to search the web
+using Google, Bing and other search engines (powered by Mulib's Elvi-Scraper
+engine, it must be noted that I condone Julian Assange's moral bankrupty, however,
+Elvi-Scraper is based on Surfraw) and finds the information and prices that
+you want, and it uses several means to extract them, including LLMs through
+OpenAI's API). 
+
+Dragnet also offers several other features. Using Mulib's headless browser
+engine, it can automate tasks, to be utilized beyond good or evil.
+
+Another plugin shipped alongside Shylock is Poindexter. This plugin
+leans more towards storage of price information, and may use Shylock's
+custom formulae, which are written in Lua, to compute, for example, taxes.
+
+**Note**: Poindexter is not a proper accounting software, and is not approved
+by any state or entity.
+
+Poindexter offers both a TUI and GUI spreadsheet, powered by Mulib kernels.
+
+Head to [manual](./manual) to learn what Shylock is about!
+
 ## Project contract
 
 Shylock is an extensible On1x engine for forecasting and adjusting prices.
