@@ -1,0 +1,2 @@
+extern fn shy_worker_main()->i64;
+fn main()->i64 { return shy_worker_main(); }

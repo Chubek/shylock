@@ -1,52 +1,25 @@
 #include "shylock.h"
-#include "mulib-cryptohash.h"
+#include "extensions.h"
+#include "mune_vm.h"
+#include "sandbox.h"
 #include "mulib-histprice.h"
 #include "mulib-mune.h"
 #include "mulib-priceopt.h"
 #include "mulib-statsprice.h"
-#include "mulib-uri.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-char *shy_read(const char *path, size_t limit, size_t *length)
-{
-    FILE *stream = fopen(path, "rb");
-    if (!stream) return NULL;
-    char *data = malloc(limit + 1);
-    size_t n = data ? fread(data, 1, limit + 1, stream) : 0;
-    int ok = data && !ferror(stream) && n <= limit && !memchr(data, 0, n);
-    fclose(stream);
-    if (!ok) { free(data); return NULL; }
-    data[n] = 0;
-    *length = n;
-    return data;
-}
-
-void shy_digest(const char *data, size_t length, char out[65])
-{
-    unsigned char digest[32];
-    (void)mulib_blake3(data, length, digest, sizeof digest);
-    for (size_t i = 0; i < sizeof digest; ++i)
-        snprintf(out + i * 2, 3, "%02x", (unsigned)digest[i]);
-}
-
-int64_t shy_error(const char *message)
-{
-    fprintf(stderr, "shylock: %s\n", message);
-    return 2;
-}
-
-int shy_add(mulib_json_t *object, const char *key, mulib_json_t *value)
-{
-    if (value && mulib_json_set(object, key, value)) return 1;
-    mulib_json_destroy(value);
-    return 0;
-}
-
 int64_t shy_emit(mulib_json_t *record)
 {
+    const char *schema = shy_text(record, "schema"), *event = NULL;
+    if (!strcmp(schema, "shylock.capture/v2")) event = "capture.extracted";
+    else if (!strcmp(schema, "shylock.cohort/v1")) event = "cohort.created";
+    else if (!strcmp(schema, "shylock.forecast/v1")) event = "forecast.created";
+    else if (!strcmp(schema, "shylock.decision/v1")) event = "decision.created";
+    else if (!strcmp(schema, "shylock.optimization/v1")) event = "optimization.created";
+    if (event) (void)shy_extensions_enqueue(event, record);
     char *text = record ? mulib_json_stringify(record, 0) : NULL;
     mulib_json_destroy(record);
     if (!text) return shy_error("could not serialize result");
@@ -58,36 +31,37 @@ int64_t shy_emit(mulib_json_t *record)
 int64_t shy_extract(const char *path, const char *url, int64_t timestamp, const char *rules,
                     const char *model_reply)
 {
-    mulib_uri_t uri;
-    if (timestamp < 0 || timestamp > INT64_C(253402300799) || strlen(url) > 4096 ||
-        (strncmp(url, "https://", 8) && strncmp(url, "http://", 7)) ||
-        !mulib_uri_parse(url, strlen(url), &uri) || !uri.has_authority ||
-        uri.has_userinfo || !uri.host.length)
-        return shy_error("expected an HTTP(S) source URL and valid capture time");
     size_t length;
     char *data = shy_read(path, SHY_PAGE_LIMIT, &length);
     if (!data) return shy_error("cannot read bounded HTML capture");
-    const shy_plugin *plugin = &shy_dragnet;
-    mulib_json_t *record = mulib_json_new(MULIB_JSON_OBJECT);
-    mulib_json_t *items = mulib_json_new(MULIB_JSON_ARRAY);
-    char digest[65];
-    shy_digest(data, length, digest);
-    shy_capture capture = { data, length, url, rules, model_reply, digest };
-    int ok = plugin->abi == 1 && record && items && plugin->extract(&capture, items);
+    size_t ignored;
+    char *rule = *rules ? shy_read(rules, 16384, &ignored) : NULL;
+    char *model = *model_reply ? shy_read(model_reply, 65536, &ignored) : NULL;
+    /* A missing optional model file is represented as invalid model input so
+       extraction can retain its deterministic results and a diagnostic. */
+    mulib_json_t *record = (!*rules || rule) ? shy_capture_record(data, length, url, timestamp,
+        rule ? rule : "", model ? model : (*model_reply ? "unreadable model reply" : ""), "dragnet") : NULL;
     free(data);
-    if (!ok || !mulib_json_set(record, "candidates", items)) {
-        mulib_json_destroy(items);
-        mulib_json_destroy(record);
-        return shy_error("extractor failed; check site rules and snapshot limits");
-    }
-    if (!shy_add(record, "plugin", mulib_json_string(plugin->name)) ||
-        !shy_add(record, "source_url", mulib_json_string(url)) ||
-        !shy_add(record, "captured_at", mulib_json_number((double)timestamp)) ||
-        !shy_add(record, "blake3", mulib_json_string(digest))) {
-        mulib_json_destroy(record);
-        return shy_error("could not allocate capture record");
-    }
+    free(rule);
+    free(model);
+    if (!record) return shy_error("extractor failed; check URL, capture time, site rules and snapshot limits");
     return shy_emit(record);
+}
+
+int64_t shy_plugins(void)
+{
+    if (!shy_plugins_init()) return shy_error("plugin ABI negotiation failed");
+    mulib_json_t *out = mulib_json_new(MULIB_JSON_ARRAY);
+    const shy_plugin *plugin;
+    for (size_t i = 0; (plugin = shy_plugin_at(i)); ++i) {
+        mulib_json_t *row = mulib_json_new(MULIB_JSON_OBJECT);
+        int ok = shy_add(row, "name", mulib_json_string(plugin->name)) &&
+            shy_add(row, "version", mulib_json_string(plugin->version)) &&
+            shy_add(row, "abi", mulib_json_number(plugin->abi));
+        if (!ok) mulib_json_destroy(row);
+        if (!ok || !shy_push(out, row)) { mulib_json_destroy(out); return 2; }
+    }
+    return shy_emit(out);
 }
 
 /* Command processes carry one forecast into a subsequent decision. */
@@ -95,6 +69,8 @@ static struct {
     char digest[65];
     int64_t horizon;
     double point;
+    size_t samples;
+    mulib_json_t *cohort;
 } forecast_context;
 
 static int64_t estimate_error(const char *message, int64_t emit)
@@ -105,23 +81,12 @@ static int64_t estimate_error(const char *message, int64_t emit)
 
 int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
 {
+    mulib_json_destroy(forecast_context.cohort);
+    memset(&forecast_context, 0, sizeof forecast_context);
     if (horizon < 1 || horizon > 365) return estimate_error("horizon must be in 1..365", emit);
-    size_t length;
-    char *data = shy_read(path, SHY_PAGE_LIMIT, &length);
-    if (!data) return estimate_error("cannot read series", emit);
-    shy_digest(data, length, forecast_context.digest);
-    mulib_json_t *input = mulib_json_parse(data, length, NULL);
-    free(data);
-    size_t count = mulib_json_size(input);
+    size_t count;
     double values[4096];
-    int ok = mulib_json_typeof(input) == MULIB_JSON_ARRAY && count >= 2 && count <= 4096;
-    for (size_t i = 0; ok && i < count; ++i) {
-        const mulib_json_t *item = mulib_json_at(input, i);
-        values[i] = mulib_json_numeric(item);
-        ok = mulib_json_typeof(item) == MULIB_JSON_NUMBER && values[i] >= 0 &&
-             values[i] <= 1e12 && trunc(values[i]) == values[i];
-    }
-    mulib_json_destroy(input);
+    int ok = shy_series_load(path, values, &count, forecast_context.digest, &forecast_context.cohort);
     mulib_statsprice_summary_t market;
     mulib_histprice_forecast_t forecast;
     if (!ok || !mulib_statsprice_summarize(values, count, &market) ||
@@ -130,88 +95,62 @@ int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
         return estimate_error("expected an equally spaced cohort of 2..4096 integer minor-unit samples", emit);
     forecast_context.horizon = horizon;
     forecast_context.point = forecast.point;
-    if (!emit) return (int64_t)llround(forecast.point);
+    forecast_context.samples = count;
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
-    if (!shy_add(out, "reference_minor", mulib_json_number(market.median)) ||
+    if (!shy_add(out, "schema", mulib_json_string("shylock.forecast/v1")) ||
+        !shy_add(out, "kind", mulib_json_string("forecast")) ||
+        !shy_add(out, "estimator", shy_estimator()) ||
+        !shy_add(out, "reference_minor", mulib_json_number(market.median)) ||
         !shy_add(out, "forecast_minor", mulib_json_number(forecast.point)) ||
         !shy_add(out, "samples", mulib_json_number((double)count)) ||
         !shy_add(out, "horizon", mulib_json_number((double)horizon)) ||
         !shy_add(out, "series_blake3", mulib_json_string(forecast_context.digest))) {
         mulib_json_destroy(out);
-        return shy_error("could not allocate estimate");
+        return estimate_error("could not allocate estimate", emit);
+    }
+    if (forecast_context.cohort && !shy_add(out, "cohort_lineage", shy_clone(forecast_context.cohort))) {
+        mulib_json_destroy(out); return estimate_error("could not attach forecast lineage", emit);
+    }
+    if (!emit) {
+        (void)shy_extensions_enqueue("forecast.created", out);
+        mulib_json_destroy(out);
+        return (int64_t)llround(forecast.point);
     }
     return shy_emit(out);
 }
 
-/* Separate formula state. Clear the actual globals table using raw operations
-   before running any user code. Re-start iteration after each removal. */
-static int restrict_formula(mulib_mune_state_t *state)
-{
-    mulib_mune_value_t globals, key, value, math;
-    if (mulib_mune_get_global(state, "math", &math) != MULIB_MUNE_OK) return 0;
-    mulib_mune_result_t *roots = mulib_mune_result_create(state);
-    if (!roots || !mulib_mune_result_push(roots, math)) {
-        if (roots) mulib_mune_result_destroy(roots);
-        return 0;
-    }
-    if (mulib_mune_get_global(state, "_G", &globals) != MULIB_MUNE_OK ||
-        globals.type != MULIB_MUNE_TABLE) return 0;
-    /* Keep a host root after removing _G. The VM also roots its globals. */
-    for (;;) {
-        size_t cursor = 0;
-        int found = mulib_mune_table_next(state, globals, &cursor, &key, &value);
-        if (found <= 0) {
-            int ok = found == 0;
-            static const char *const forbidden[] = { "random", "randomseed" };
-            for (size_t i = 0; ok && i < 2; ++i)
-                ok = mulib_mune_set_field(state, math, forbidden[i], mulib_mune_nil()) == MULIB_MUNE_OK;
-            if (ok) ok = mulib_mune_set_global(state, "math", math) == MULIB_MUNE_OK;
-            mulib_mune_result_destroy(roots);
-            return ok;
-        }
-        if (mulib_mune_raw_set(state, globals, key, mulib_mune_nil()) != MULIB_MUNE_OK)
-            return 0;
-    }
-}
-
 static char formula_digest[65];
+static char formula_error[SHY_VM_ERROR];
+static int formula_isolation, formula_sandbox_active;
 
 int64_t shy_formula(const char *path, int64_t reference, int64_t weekend, int64_t premium)
 {
     size_t length;
-    formula_digest[0] = 0;
+    formula_digest[0] = 0; *formula_error = 0; formula_sandbox_active = 0;
+    formula_isolation = shy_sandbox_mode(getenv("SHY_FORMULA_SANDBOX"));
     char *source = shy_read(path, 16384, &length);
-    if (!source) { shy_error("cannot read formula"); return -1; }
+    if (!source) { shy_vm_error(formula_error, "cannot read formula"); shy_error(formula_error); return -1; }
     shy_digest(source, length, formula_digest);
-    mulib_mune_error_t error = { 0 };
-    const mulib_mune_parse_options_t parse = { 16384, 4096, 4096, 8192, 100000 };
-    const mulib_mune_runtime_options_t runtime = { 1024 * 1024, 50000, 32, 32 };
-    mulib_mune_chunk_t *chunk = mulib_mune_parse(source, length, &parse, &error);
-    free(source);
-    mulib_mune_state_t *state = chunk ? mulib_mune_state_create(&runtime) : NULL;
-    mulib_mune_result_t *loaded = NULL, *result = NULL;
     int64_t rate = -1;
-    if (state && restrict_formula(state) &&
-        mulib_mune_run(state, chunk, &loaded, &error) == MULIB_MUNE_OK &&
-        mulib_mune_result_count(loaded) == 1) {
-        mulib_mune_value_t fn = mulib_mune_result_get(loaded, 0);
-        mulib_mune_value_t args[] = {
-            mulib_mune_integer(reference), mulib_mune_boolean(weekend != 0),
-            mulib_mune_integer(premium)
-        };
-        if (fn.type == MULIB_MUNE_FUNCTION &&
-            mulib_mune_call(state, fn, args, 3, &result, &error) == MULIB_MUNE_OK &&
-            mulib_mune_result_count(result) == 1) {
-            mulib_mune_value_t value = mulib_mune_result_get(result, 0);
-            if (value.type == MULIB_MUNE_INTEGER && value.as.integer >= 0 &&
-                value.as.integer <= INT64_C(1000000000000)) rate = value.as.integer;
-        }
+    if (formula_isolation < 0) shy_vm_error(formula_error, "sandbox mode must be off or process");
+    else if (!formula_isolation) (void)shy_formula_eval(source, length, reference, weekend, premium, &rate, formula_error);
+    else {
+        shy_process *worker = shy_process_start(0, formula_error);
+        formula_sandbox_active = worker != NULL;
+        mulib_json_t *request = mulib_json_new(MULIB_JSON_OBJECT);
+        int built = shy_add(request, "op", mulib_json_string("formula")) &&
+            shy_add(request, "source", mulib_json_string(source)) &&
+            shy_add(request, "reference", mulib_json_number((double)reference)) &&
+            shy_add(request, "weekend", mulib_json_bool(weekend != 0)) &&
+            shy_add(request, "premium", mulib_json_number((double)premium));
+        mulib_json_t *response = worker && built ? shy_process_request(worker, request, NULL, NULL, formula_error) : NULL;
+        if (response && mulib_json_boolean(mulib_json_get(response, "ok"))) rate = shy_integer(response, "minor", INT64_C(1000000000000));
+        if (rate < 0 && !*formula_error) shy_vm_error(formula_error, response && *shy_text(response, "error") ?
+            shy_text(response, "error") : "invalid or unallocated sandbox formula result");
+        mulib_json_destroy(response); mulib_json_destroy(request); shy_process_destroy(worker);
     }
-    if (rate < 0) shy_error(error.message ? error.message : "formula must return one bounded integer");
-    if (result) mulib_mune_result_destroy(result);
-    if (loaded) mulib_mune_result_destroy(loaded);
-    if (state) mulib_mune_state_destroy(state);
-    if (chunk) mulib_mune_chunk_destroy(chunk);
+    free(source);
+    if (rate < 0) shy_error(formula_error);
     return rate;
 }
 
@@ -221,9 +160,15 @@ int64_t shy_report_rate(int64_t reference, int64_t proposed, int64_t adjusted,
 {
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
     int ok = adjusted >= 0;
-    if (!shy_add(out, "contract", mulib_json_string("adjust_rate/v1")) ||
+    if (!shy_add(out, "schema", mulib_json_string("shylock.decision/v1")) ||
+        !shy_add(out, "kind", mulib_json_string("formula_adjusted")) ||
+        !shy_add(out, "contract", mulib_json_string("adjust_rate/v1")) ||
+        !shy_add(out, "mulib_revision", mulib_json_string(SHY_MULIB_REVISION)) ||
         !shy_add(out, "mune_api", mulib_json_number(mulib_mune_version())) ||
         !shy_add(out, "formula_blake3", mulib_json_string(formula_digest)) ||
+        !shy_add(out, "formula_isolation", mulib_json_string(formula_isolation < 0 ? "invalid" : formula_isolation ? "process" : "off")) ||
+        !shy_add(out, "formula_sandbox_profile", mulib_json_string(formula_sandbox_active ? SHY_SANDBOX_PROFILE : "none")) ||
+        !shy_add(out, "formula_error", ok ? mulib_json_new(MULIB_JSON_NULL) : mulib_json_string(formula_error)) ||
         !shy_add(out, "status", mulib_json_string(ok ? "adjusted" : "formula_error")) ||
         !shy_add(out, "reference_minor", mulib_json_number((double)reference)) ||
         !shy_add(out, "weekend", mulib_json_bool(weekend != 0)) ||
@@ -238,10 +183,15 @@ int64_t shy_report_rate(int64_t reference, int64_t proposed, int64_t adjusted,
     }
     if (forecast_context.horizon &&
         (!shy_add(out, "forecast_minor", mulib_json_number(forecast_context.point)) ||
-         !shy_add(out, "horizon", mulib_json_number((double)forecast_context.horizon)) ||
+          !shy_add(out, "horizon", mulib_json_number((double)forecast_context.horizon)) ||
+          !shy_add(out, "samples", mulib_json_number((double)forecast_context.samples)) ||
+          !shy_add(out, "estimator", shy_estimator()) ||
          !shy_add(out, "series_blake3", mulib_json_string(forecast_context.digest)))) {
         mulib_json_destroy(out);
         return shy_error("could not attach forecast");
+    }
+    if (forecast_context.cohort && !shy_add(out, "cohort_lineage", shy_clone(forecast_context.cohort))) {
+        mulib_json_destroy(out); return 2;
     }
     int64_t status = shy_emit(out);
     return status ? status : (ok ? 0 : 2);
@@ -285,7 +235,14 @@ int64_t shy_optimize(const char *path, int64_t floor, int64_t cap, int64_t tick,
     if (!mulib_priceopt_candidates(prices, demand, feasible, &limits, MULIB_PRICEOPT_PROFIT, &result))
         return shy_error("no feasible rate meets the price and cost constraints");
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
-    if (!shy_add(out, "objective", mulib_json_string("expected_profit")) ||
+    if (!shy_add(out, "schema", mulib_json_string("shylock.optimization/v1")) ||
+        !shy_add(out, "kind", mulib_json_string("demand_optimized")) ||
+        !shy_add(out, "demand_origin", mulib_json_string("externally_supplied")) ||
+        !shy_add(out, "floor_minor", mulib_json_number((double)floor)) ||
+        !shy_add(out, "cap_minor", mulib_json_number((double)cap)) ||
+        !shy_add(out, "tick_minor", mulib_json_number((double)tick)) ||
+        !shy_add(out, "unit_cost_minor", mulib_json_number((double)cost)) ||
+        !shy_add(out, "objective", mulib_json_string("expected_profit")) ||
         !shy_add(out, "demand_blake3", mulib_json_string(digest)) ||
         !shy_add(out, "recommended_minor", mulib_json_number(result.price)) ||
         !shy_add(out, "expected_units", mulib_json_number(result.expected_demand)) ||

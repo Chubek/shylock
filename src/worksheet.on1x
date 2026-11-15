@@ -1,0 +1,128 @@
+extern fn shy_sheet_load(cohort:string)->i64;
+extern fn shy_sheet_close()->i64;
+extern fn shy_sheet_emit()->i64;
+extern fn shy_sheet_move(rows:i64,columns:i64)->i64;
+extern fn shy_sheet_select_cell(row:i64,column:string)->i64;
+extern fn shy_sheet_stage(key:string,text:string)->i64;
+extern fn shy_sheet_discard()->i64;
+extern fn shy_sheet_dirty()->i64;
+extern fn shy_sheet_filter(text:string)->i64;
+extern fn shy_sheet_sort()->i64;
+extern fn shy_sheet_prepare_revision()->i64;
+extern fn shy_sheet_notify(text:string)->i64;
+extern fn shy_sheet_key()->string;
+extern fn shy_sheet_decision()->string;
+extern fn shy_sheet_reason()->string;
+extern fn shy_sheet_event(name:string)->i64;
+extern fn shy_ui_open(kind:string,events:string,frame:string)->i64;
+extern fn shy_ui_next()->string;
+extern fn shy_ui_text()->string;
+extern fn shy_ui_column()->string;
+extern fn shy_ui_row()->i64;
+extern fn shy_ui_result(action:string,status:i64)->i64;
+extern fn shy_ui_finish()->i64;
+extern fn shy_extensions_drain()->i64;
+
+fn worksheet_reload(path:string,cohort:string)->i64 {
+  if shy_store_open(path)!=1 { return 2; }
+  let status=shy_sheet_load(cohort);
+  shy_store_close();
+  return status;
+}
+
+fn worksheet_dump(path:string,cohort:string)->i64 {
+  let loaded=worksheet_reload(path,cohort);
+  if loaded!=0 { shy_sheet_close(); return loaded; }
+  let result=shy_sheet_emit();
+  shy_sheet_close();
+  return result;
+}
+
+fn worksheet_editable(key:string)->bool {
+  return key=="listing_id" || key=="stay_start" || key=="stay_end" || key=="guests" ||
+    key=="taxes" || key=="fees" || key=="decision";
+}
+
+fn worksheet_save(path:string,cohort:string,reviewer:string)->i64 {
+  if shy_sheet_dirty()==0 || shy_sheet_reason()=="" {
+    shy_sheet_notify("Staged edits require an explicit review reason (n) before saving");
+    return 2;
+  }
+  if shy_store_open(path)!=1 { shy_sheet_notify("Cannot open database; staged edits retained"); return 2; }
+  var result=2;
+  if shy_sheet_prepare_revision()==1 {
+    let decision=shy_sheet_decision();
+    if decision=="rejected" || (decision=="accepted" && review_admissible()) {
+      result=shy_revision_save(decision,reviewer,shy_sheet_reason());
+    } else { shy_sheet_notify("Review context remains unresolved or non-comparable; staged edits retained"); }
+  } else { shy_sheet_notify("Cannot prepare revision; original snapshot and staged edits retained"); }
+  shy_store_close();
+  if result==3 { shy_sheet_notify("Stale review: another writer changed this row. Edits retained; discard and refresh to rebase."); }
+  if result==0 {
+    shy_sheet_discard();
+    result=worksheet_reload(path,cohort);
+    if result==0 { shy_sheet_notify("Saved a new review revision; original evidence and review history retained"); }
+    else { shy_sheet_notify("Review committed, but refresh failed; reopen the worksheet before editing again"); }
+    shy_extensions_drain();
+    if result==0 { shy_sheet_event("worksheet.saved"); }
+  }
+  return result;
+}
+
+fn worksheet_action(action:string,path:string,cohort:string,reviewer:string)->i64 {
+  if action=="up" { return shy_sheet_move(-1,0); }
+  if action=="down" { return shy_sheet_move(1,0); }
+  if action=="left" { return shy_sheet_move(0,-1); }
+  if action=="right" { return shy_sheet_move(0,1); }
+  if action=="page_up" { return shy_sheet_move(-10,0); }
+  if action=="page_down" { return shy_sheet_move(10,0); }
+  if action=="home" { return shy_sheet_move(-16384,0); }
+  if action=="last" { return shy_sheet_move(16384,0); }
+  if action=="select" { return shy_sheet_select_cell(shy_ui_row(),shy_ui_column()); }
+  if action=="edit" {
+    if worksheet_editable(shy_sheet_key()) { return shy_sheet_stage(shy_sheet_key(),shy_ui_text()); }
+    shy_sheet_notify("Evidence and audit cells are read-only");
+    return 2;
+  }
+  if action=="reason" { return shy_sheet_stage("$reason",shy_ui_text()); }
+  if action=="filter" { return shy_sheet_filter(shy_ui_text()); }
+  if action=="sort" { return shy_sheet_sort(); }
+  if action=="discard" { return shy_sheet_discard(); }
+  if action=="save" { return worksheet_save(path,cohort,reviewer); }
+  if action=="refresh" {
+    if shy_sheet_dirty()!=0 { shy_sheet_notify("Discard staged edits explicitly (d) before refreshing"); return 2; }
+    return worksheet_reload(path,cohort);
+  }
+  if action=="" || action=="resize" || action=="pointer" { return 0; }
+  shy_sheet_notify("Unknown or invalid worksheet action");
+  return 2;
+}
+
+fn worksheet(path:string,cohort:string,reviewer:string,kind:string,events:string,frame:string)->i64 {
+  if reviewer=="" || text_len(reviewer)>128 { return shy_error("worksheet requires a reviewer label"); }
+  let loaded=worksheet_reload(path,cohort);
+  if loaded!=0 { shy_sheet_close(); return loaded; }
+  if shy_ui_open(kind,events,frame)!=1 {
+    shy_ui_finish(); shy_sheet_close();
+    return shy_error("cannot open worksheet frontend or event script");
+  }
+  shy_sheet_event("worksheet.opened");
+  var quitting=false;
+  var running=true;
+  while running {
+    let action=shy_ui_next();
+    var result=0;
+    if action=="quit" {
+      if shy_sheet_dirty()!=0 && !quitting { quitting=true; shy_sheet_notify("Unsaved edits. Press q again to discard and quit, or s to save."); }
+      else { running=false; }
+    }
+    else { if action=="stop" || action=="end" { running=false; }
+    else { if action=="fatal" { result=2; running=false; }
+    else { result=worksheet_action(action,path,cohort,reviewer); } } }
+    if action!="quit" && action!="" { quitting=false; }
+    if shy_ui_result(action,result)!=0 { running=false; }
+  }
+  let result=shy_ui_finish();
+  shy_sheet_close();
+  return result;
+}

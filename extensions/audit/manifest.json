@@ -1,0 +1,1 @@
+{"schema":"shylock.extension/v1","name":"audit","script":"audit.lua","capabilities":["log"],"events":["capture.extracted","observation.reviewed","cohort.created","forecast.created","decision.created","optimization.created","worksheet.opened","worksheet.saved"]}

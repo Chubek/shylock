@@ -1,38 +1,150 @@
 extern fn shy_store_open(path:string)->i64;
 extern fn shy_store_close()->i64;
-extern fn shy_review_load(path:string)->i64;
-extern fn shy_review_amount(index:i64)->i64;
-extern fn shy_review_field(index:i64,key:string)->string;
-extern fn shy_review_save(index:i64,cohort:string,basis:string,reviewer:string)->i64;
+extern fn shy_review_load(path:string,html:string,context:string)->i64;
+extern fn shy_review_prepare(index:i64)->i64;
+extern fn shy_review_number(key:string)->i64;
+extern fn shy_review_field(key:string)->string;
+extern fn shy_review_verified()->i64;
+extern fn shy_review_date(key:string)->i64;
+extern fn shy_review_save(index:i64,cohort:string,reviewer:string,decision:string,reason:string)->i64;
+extern fn shy_revision_load(observation:string,expected:string,context:string)->i64;
+extern fn shy_revision_save(decision:string,reviewer:string,reason:string)->i64;
 extern fn shy_store_list(cohort:string)->i64;
-extern fn shy_store_series(cohort:string,currency:string,start:i64,step:i64,count:i64)->i64;
+extern fn shy_store_history(observation:string)->i64;
+extern fn shy_store_replay(extraction:string)->i64;
+extern fn shy_store_incompatible(index:i64,field:string,reference:i64,expected:string)->i64;
+extern fn shy_store_select(cohort:string)->i64;
+extern fn shy_stored_field(index:i64,key:string)->string;
+extern fn shy_stored_number(index:i64,key:string)->i64;
+extern fn shy_money_scale(currency:string)->i64;
+extern fn shy_store_series(cohort:string,currency:string,start:i64,step:i64,count:i64,rich:i64)->i64;
 
-fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string)->i64 {
-  if index<0 || cohort=="" || reviewer=="" { return 2; }
+# Admission is domain policy, not a side effect of JSON parsing. Unknown
+# context remains evidence; only explicitly comparable reviews enter v1 cohorts.
+fn review_admissible()->bool {
+  let currency=shy_review_field("currency");
+  let scale=shy_review_number("scale");
+  if shy_review_number("minor")<0 || scale<0 || scale!=shy_money_scale(currency) ||
+     shy_review_field("basis")!="nightly" || shy_review_field("qualifier")!="unspecified" {
+    return false;
+  }
+  if shy_review_verified()==1 {
+    let taxes=shy_review_field("taxes");
+    let fees=shy_review_field("fees");
+    let start=shy_review_date("stay_start");
+    let end=shy_review_date("stay_end");
+    let guests=shy_review_number("guests");
+    if shy_review_field("listing_id")=="" || start<0 || end<=start || guests<1 || guests>64 ||
+       (taxes!="included" && taxes!="excluded") || (fees!="included" && fees!="excluded") {
+      return false;
+    }
+  }
+  return true;
+}
+
+fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string,
+          html:string,context:string)->i64 {
+  if index<0 || cohort=="" || reviewer=="" { return shy_error("invalid review inputs"); }
   if shy_store_open(path)!=1 { return 2; }
   var result=2;
-  if shy_review_load(capture)==1 {
-    let amount=shy_review_amount(index);
-    let basis=shy_review_field(index,"basis");
-    let qualifier=shy_review_field(index,"qualifier");
-    let currency=shy_review_field(index,"currency");
-    if amount>=0 && basis=="nightly" && qualifier=="unspecified" && text_len(currency)==3 {
-      result=shy_review_save(index,cohort,basis,reviewer);
-    }
+  if shy_review_load(capture,html,context)==1 && shy_review_prepare(index)==1 {
+    if review_admissible() { result=shy_review_save(index,cohort,reviewer,"accepted","initial acceptance"); }
+    else { shy_error("candidate has unresolved or non-comparable amount, currency, basis, qualifier or stay context"); }
   }
   shy_store_close();
   return result;
 }
+
+fn reject(path:string,capture:string,index:i64,cohort:string,reviewer:string,
+          reason:string,html:string)->i64 {
+  if index<0 || cohort=="" || reviewer=="" || reason=="" { return shy_error("invalid rejection inputs"); }
+  if shy_store_open(path)!=1 { return 2; }
+  var result=2;
+  if shy_review_load(capture,html,"")==1 && shy_review_prepare(index)==1 {
+    result=shy_review_save(index,cohort,reviewer,"rejected",reason);
+  }
+  shy_store_close();
+  return result;
+}
+
+fn revise(path:string,observation:string,expected:string,decision:string,
+          reviewer:string,reason:string,context:string)->i64 {
+  if decision!="accepted" && decision!="rejected" { return shy_error("review decision must be accepted or rejected"); }
+  if shy_store_open(path)!=1 { return 2; }
+  var result=2;
+  if shy_revision_load(observation,expected,context)==1 {
+    if decision=="rejected" || review_admissible() { result=shy_revision_save(decision,reviewer,reason); }
+    else { shy_error("revised observation is not comparable"); }
+  }
+  shy_store_close();
+  return result;
+}
+
 fn ledger(path:string,cohort:string)->i64 {
   if shy_store_open(path)!=1 { return 2; }
   let result=shy_store_list(cohort);
   shy_store_close();
   return result;
 }
-fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64)->i64 {
-  if start<0 || step<1 || count<2 || count>4096 { return 2; }
+
+fn history(path:string,observation:string)->i64 {
   if shy_store_open(path)!=1 { return 2; }
-  let result=shy_store_series(cohort,currency,start,step,count);
+  let result=shy_store_history(observation);
+  shy_store_close();
+  return result;
+}
+
+fn replay(path:string,extraction:string)->i64 {
+  if shy_store_open(path)!=1 { return 2; }
+  let result=shy_store_replay(extraction);
+  shy_store_close();
+  return result;
+}
+
+fn cohort_difference(index:i64,reference:i64)->string {
+  if shy_stored_field(index,"stay_start")!=shy_stored_field(reference,"stay_start") { return "stay_start"; }
+  if shy_stored_field(index,"stay_end")!=shy_stored_field(reference,"stay_end") { return "stay_end"; }
+  if shy_stored_number(index,"guests")!=shy_stored_number(reference,"guests") { return "guests"; }
+  if shy_stored_field(index,"taxes")!=shy_stored_field(reference,"taxes") { return "taxes"; }
+  if shy_stored_field(index,"fees")!=shy_stored_field(reference,"fees") { return "fees"; }
+  if shy_stored_field(index,"qualifier")!=shy_stored_field(reference,"qualifier") { return "qualifier"; }
+  return "";
+}
+
+fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64,rich:i64)->i64 {
+  let scale=shy_money_scale(currency);
+  if cohort=="" || scale<0 || start<0 || start>253402300799 || step<1 || count<2 || count>4096 ||
+     step>(253402300800-start)/count { return shy_error("invalid cohort interval or currency"); }
+  if shy_store_open(path)!=1 { return 2; }
+  var result=0;
+  let size=shy_store_select(cohort);
+  if size<0 { result=2; }
+  var i=0;
+  var reference=-1;
+  while result==0 && i<size {
+    let time=shy_stored_number(i,"captured_at");
+    let in_window=time>=start && time<start+step*count;
+    if shy_stored_field(i,"decision")=="accepted" && (rich==0 || in_window) {
+      if shy_stored_field(i,"currency")!=currency { result=shy_store_incompatible(i,"currency",-1,currency); }
+      else { if shy_stored_number(i,"scale")!=scale { result=shy_store_incompatible(i,"scale",-1,currency); }
+      else { if shy_stored_field(i,"basis")!="nightly" { result=shy_store_incompatible(i,"basis",-1,"nightly"); } } }
+      if rich==1 && result==0 {
+        if shy_stored_field(i,"provenance")!="verified-replay" {
+          result=shy_store_incompatible(i,"provenance",-1,"verified-replay");
+        } else { if shy_stored_field(i,"admission")!="comparable/v1" {
+          result=shy_store_incompatible(i,"admission",-1,"comparable/v1");
+        } }
+        if reference<0 { reference=i; }
+        else {
+          let field=cohort_difference(i,reference);
+          if result==0 && field!="" { result=shy_store_incompatible(i,field,reference,""); }
+        }
+      }
+    }
+    i=i+1;
+  }
+  if result==0 { result=shy_store_series(cohort,currency,start,step,count,rich); }
+  else { shy_error("cohort contains incompatible currency, scale, stay context or unverified reviews"); }
   shy_store_close();
   return result;
 }

@@ -23,6 +23,8 @@ typedef struct {
     const char *rule_hash;
     const char *model;
     unsigned raw_depth;
+    const char *container_tag, *container_attribute, *container_value;
+    unsigned container_depth, containers_seen;
 } extractor;
 
 static int digit(char c) { return c >= '0' && c <= '9'; }
@@ -36,13 +38,7 @@ static const char *field(const mulib_json_t *node, const char *key)
 
 static int currency_digits(const char *currency)
 {
-    static const char *const two[] = { "EUR", "USD", "GBP", "CAD", "AUD", "CHF",
-                                       "SEK", "NOK", "DKK", "NZD", "PLN" };
-    for (size_t i = 0; i < sizeof two / sizeof *two; ++i)
-        if (!strcmp(currency, two[i])) return 2;
-    if (!strcmp(currency, "JPY") || !strcmp(currency, "KRW")) return 0;
-    if (!strcmp(currency, "KWD") || !strcmp(currency, "BHD")) return 3;
-    return -1;
+    return shy_currency_scale(currency);
 }
 
 static int candidate(extractor *ctx, const char *method, const char *amount,
@@ -100,6 +96,10 @@ static int offer_walk(extractor *ctx, const mulib_json_t *node, const char *path
             if (digits >= 0 && value >= 0 && value <= 1e12) {
                 snprintf(numeric, sizeof numeric, "%.*f", digits, value);
                 if (strtod(numeric, NULL) == value) amount = numeric;
+            } else if (digits < 0 && value >= 0 && value <= 1e12) {
+                /* Preserve the claim without inventing a currency or scale. */
+                snprintf(numeric, sizeof numeric, "%.17g", value);
+                amount = numeric;
             }
         }
         snprintf(next, sizeof next, "%s/price", path);
@@ -170,8 +170,23 @@ static int html(void *user, const mulib_html_token_t *token)
     if (raw && token->kind == MULIB_HTML_STREAM_END && ctx->raw_depth) --ctx->raw_depth;
     if (raw && token->kind == MULIB_HTML_STREAM_START) { ++ctx->raw_depth; return 1; }
     if (ctx->raw_depth) return 1;
+    if (ctx->container_tag && !strcmp(token->name, ctx->container_tag)) {
+        if (token->kind == MULIB_HTML_STREAM_END && ctx->container_depth) --ctx->container_depth;
+        if (token->kind == MULIB_HTML_STREAM_START) {
+            if (ctx->container_depth) ++ctx->container_depth;
+            else {
+                const char *value; size_t length;
+                if (mulib_html_attribute(token->raw, token->length, ctx->container_attribute, &value, &length) &&
+                    length == strlen(ctx->container_value) && !memcmp(value, ctx->container_value, length)) {
+                    ctx->container_depth = 1;
+                    ++ctx->containers_seen;
+                }
+            }
+        }
+    }
     if (token->kind == MULIB_HTML_STREAM_TEXT) return visible(ctx, token);
-    if (ctx->attribute && token->kind == MULIB_HTML_STREAM_START) {
+    if (ctx->attribute && token->kind == MULIB_HTML_STREAM_START &&
+        (!ctx->container_tag || ctx->container_depth)) {
         const char *value;
         size_t length;
         if (mulib_html_attribute(token->raw, token->length, ctx->attribute, &value, &length) &&
@@ -190,12 +205,8 @@ static int html(void *user, const mulib_html_token_t *token)
    quote proves provenance only, so these rows are explicitly review-only. */
 static int model_candidates(extractor *ctx, const shy_capture *capture)
 {
-    if (!*capture->model_reply_path) return 1;
-    size_t length;
-    char *source = shy_read(capture->model_reply_path, 65536, &length);
-    if (!source) return 0;
-    mulib_json_t *reply = mulib_json_parse(source, length, NULL);
-    free(source);
+    if (!*capture->model_source) return 1;
+    mulib_json_t *reply = mulib_json_parse(capture->model_source, strlen(capture->model_source), NULL);
     const mulib_json_t *items = mulib_json_get(reply, "suggestions");
     ctx->model = field(reply, "model");
     int ok = *ctx->model && strlen(ctx->model) <= 128 &&
@@ -228,20 +239,33 @@ static int extract(const shy_capture *capture, mulib_json_t *items)
     extractor ctx = { .items = items };
     mulib_json_t *rule = NULL;
     char digest[65];
-    if (*capture->rules_path) {
-        size_t n;
-        char *source = shy_read(capture->rules_path, 16384, &n);
-        if (!source) return 0;
+    if (*capture->rules_source) {
+        size_t n = strlen(capture->rules_source);
+        const char *source = capture->rules_source;
+        if (n > 16384) return 0;
         shy_digest(source, n, digest);
         rule = mulib_json_parse(source, n, NULL);
-        free(source);
         mulib_uri_t url;
         const char *host = field(rule, "host");
         ctx.attribute = field(rule, "attribute");
         ctx.currency = field(rule, "currency");
         ctx.basis = field(rule, "basis");
         ctx.rule_hash = digest;
+        int64_t version = mulib_json_get(rule, "version") ? shy_integer(rule, "version", 2) : 1;
+        if (version == 2) {
+            const mulib_json_t *container = mulib_json_get(rule, "container");
+            ctx.container_tag = field(container, "tag");
+            ctx.container_attribute = field(container, "attribute");
+            ctx.container_value = field(container, "value");
+            if ((strcmp(ctx.container_tag, "article") && strcmp(ctx.container_tag, "div") &&
+                 strcmp(ctx.container_tag, "section") && strcmp(ctx.container_tag, "li")) ||
+                strncmp(ctx.container_attribute, "data-", 5) || strlen(ctx.container_attribute) <= 5 ||
+                !*ctx.container_value || strlen(ctx.container_value) > 256) {
+                mulib_json_destroy(rule); return 0;
+            }
+        }
         if (!mulib_uri_parse(capture->url, strlen(capture->url), &url) ||
+            version < 1 ||
             !url.has_authority || url.has_userinfo || strlen(host) != url.host.length ||
             strncasecmp(url.host.data, host, url.host.length) ||
             strncmp(ctx.attribute, "data-", 5) || strlen(ctx.attribute) <= 5 ||
@@ -254,12 +278,37 @@ static int extract(const shy_capture *capture, mulib_json_t *items)
     }
     int ok = mulib_html_jsonld_scan(capture->html, capture->length, jsonld, &ctx, 64) &&
              mulib_html_tokenizer_scan(capture->html, capture->length, html, &ctx, 100000) &&
-             model_candidates(&ctx, capture);
+             !ctx.container_depth;
+    if (ok && ctx.container_tag && !ctx.containers_seen) {
+        mulib_json_t *diagnostic = mulib_json_new(MULIB_JSON_OBJECT);
+        ok = shy_add(diagnostic, "code", mulib_json_string("site_rule_no_container")) &&
+            shy_add(diagnostic, "rule_blake3", mulib_json_string(ctx.rule_hash));
+        if (ok) ok = shy_push(capture->diagnostics, diagnostic);
+        else mulib_json_destroy(diagnostic);
+    }
+    /* Model output is transactional and optional. A bad suggestion must never
+       discard deterministic evidence or leak partially validated suggestions. */
+    if (ok && *capture->model_source) {
+        mulib_json_t *suggestions = mulib_json_new(MULIB_JSON_ARRAY);
+        ctx.items = suggestions;
+        if (!suggestions) ok = 0;
+        else if (strlen(capture->model_source) > 65536 || !model_candidates(&ctx, capture)) {
+            mulib_json_t *diagnostic = mulib_json_new(MULIB_JSON_OBJECT);
+            ok = shy_add(diagnostic, "code", mulib_json_string("model_reply_invalid")) &&
+                 shy_add(diagnostic, "message", mulib_json_string("model suggestions rejected; deterministic evidence retained"));
+            if (ok) ok = shy_push(capture->diagnostics, diagnostic);
+            else mulib_json_destroy(diagnostic);
+        } else {
+            for (size_t i = 0; ok && i < mulib_json_size(suggestions); ++i)
+                ok = mulib_json_size(items) < 256 && shy_push(items, shy_clone(mulib_json_at(suggestions, i)));
+        }
+        mulib_json_destroy(suggestions);
+    }
     mulib_json_destroy(rule);
     return ok;
 }
 
-const shy_plugin shy_dragnet = { 1, "dragnet/v1", extract };
+const shy_plugin shy_dragnet = { SHY_EXTRACTOR_ABI, sizeof(shy_plugin), "dragnet", "dragnet/v2", extract };
 
 /* Optional HTTPS transport for the CLI. Curl handles certificate validation.
    ElviScrape still owns query construction, transport policy and SERP parsing. */

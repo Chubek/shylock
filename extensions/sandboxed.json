@@ -1,0 +1,1 @@
+{"schema":"shylock.extensions/v1","extensions":[{"manifest":"audit/manifest.json","grant":["log"],"sandbox":"process"}]}

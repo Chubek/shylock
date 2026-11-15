@@ -1,4 +1,5 @@
 import "poindexter.on1x";
+import "worksheet.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -11,6 +12,11 @@ extern fn shy_optimize(scenarios: string, floor: i64, cap: i64, tick: i64, cost:
 extern fn shy_formula(path: string, reference: i64, weekend: i64, premium: i64) -> i64;
 extern fn shy_report_rate(reference: i64, proposed: i64, adjusted: i64, weekend: i64, premium: i64, floor: i64, cap: i64, tick: i64) -> i64;
 extern fn shy_error(message: string) -> i64;
+extern fn shy_plugins() -> i64;
+extern fn shy_backtest(series: string, horizon: i64, training: i64) -> i64;
+extern fn shy_extensions_begin(configuration:string)->i64;
+extern fn shy_extensions_end()->i64;
+extern fn shy_extension_command(configuration:string,event:string,payload:string)->i64;
 
 fn parse_int(text: string) -> i64 {
   let (ok, value, end) = Scan.basis_parsec_int(text, 0);
@@ -36,21 +42,39 @@ fn adjust(path: string, reference: i64, weekend: i64, premium: i64,
   return shy_report_rate(reference, proposed, rate, weekend, premium, floor, cap, tick);
 }
 
-fn main() -> i64 {
+fn run_command() -> i64 {
   let command = CLI.basis_command_line_get_env("SHY_COMMAND");
   let count = parse_int(CLI.basis_command_line_get_env("SHY_COUNT"));
   let a = CLI.basis_command_line_get_env("SHY_1");
   let b = CLI.basis_command_line_get_env("SHY_2");
   let c = CLI.basis_command_line_get_env("SHY_3");
   let d = CLI.basis_command_line_get_env("SHY_4");
-  if command == "review" && count==5 {
-    return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
+  if command == "review" && count>=5 && count<=7 {
+    return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command == "revise" && (count==6 || count==7) {
+    return revise(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command == "reject" && (count==6 || count==7) {
+    return reject(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
   }
   if command == "ledger" && count==2 { return ledger(a,b); }
-  if command == "series" && count==6 {
-    return series(a,b,c,parse_int(d),parse_int(CLI.basis_command_line_get_env("SHY_5")),
-      parse_int(CLI.basis_command_line_get_env("SHY_6")));
+  if command == "sheet" && count==2 { return worksheet_dump(a,b); }
+  if (command=="tui" || command=="gui") && count>=3 && count<=5 {
+    return worksheet(a,b,c,command,d,CLI.basis_command_line_get_env("SHY_5"));
   }
+  if command == "history" && count==2 { return history(a,b); }
+  if command == "replay" && count==2 { return replay(a,b); }
+  if (command == "series" || command == "cohort") && count==6 {
+    var rich=0;
+    if command == "cohort" { rich=1; }
+    return series(a,b,c,parse_int(d),parse_int(CLI.basis_command_line_get_env("SHY_5")),
+      parse_int(CLI.basis_command_line_get_env("SHY_6")),rich);
+  }
+  if command == "plugins" && count==0 { return shy_plugins(); }
   if command == "discover" && (count == 2 || count == 3) {
     let root = CLI.basis_command_line_get_env("SHY_ROOT");
     let providers = CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
@@ -65,6 +89,9 @@ fn main() -> i64 {
   }
   if command == "estimate" && count == 2 {
     return shy_estimate(a, parse_int(b), 1);
+  }
+  if command == "backtest" && count == 3 {
+    return shy_backtest(a,parse_int(b),parse_int(c));
   }
   if command == "recommend" && count == 8 {
     let reference = shy_estimate(a, parse_int(b), 0);
@@ -86,17 +113,42 @@ fn main() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_7")));
   }
   if command == "help" || command == "" {
-    println("review DATABASE CAPTURE_JSON INDEX COHORT REVIEWER");
+    println("review DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER [PAGE_HTML [CONTEXT_JSON]]");
+    println("reject DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER REASON [PAGE_HTML]");
+    println("revise DATABASE OBSERVATION_ID EXPECTED_REVIEW_ID accepted|rejected REVIEWER REASON [CONTEXT_JSON]");
     println("ledger DATABASE COHORT");
+    println("sheet DATABASE COHORT");
+    println("tui DATABASE COHORT REVIEWER [EVENTS_JSON]");
+    println("gui DATABASE COHORT REVIEWER [EVENTS_JSON [FRAME_PPM]]");
+    println("history DATABASE OBSERVATION_ID");
+    println("replay DATABASE EXTRACTION_ID");
     println("series DATABASE COHORT CURRENCY START STEP COUNT");
+    println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
+    println("plugins");
+    println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
     println("discover PROVIDER QUERY [SERP_HTML]");
     println("capture HTTPS_URL");
     println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON]]");
     println("estimate SERIES_JSON HORIZON");
+    println("backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES");
     println("recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK");
     println("optimize DEMAND_JSON FLOOR CAP TICK UNIT_COST");
     println("adjust FORMULA REFERENCE_MINOR WEEKEND PREMIUM_BP FLOOR CAP TICK");
     return 0;
   }
   return shy_error("invalid command or argument count; see ./shylock help");
+}
+
+fn main()->i64 {
+  let command=CLI.basis_command_line_get_env("SHY_COMMAND");
+  if command=="extension" && CLI.basis_command_line_get_env("SHY_COUNT")=="3" {
+    return shy_extension_command(CLI.basis_command_line_get_env("SHY_1"),
+      CLI.basis_command_line_get_env("SHY_2"),CLI.basis_command_line_get_env("SHY_3"));
+  }
+  shy_extensions_begin(CLI.basis_command_line_get_env("SHY_EXTENSIONS"));
+  let status=run_command();
+  # Drain deferred hooks only after domain adapters have released their locks.
+  # Extension failures are diagnosed independently; never replace a core result.
+  shy_extensions_end();
+  return status;
 }
