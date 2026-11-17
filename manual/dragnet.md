@@ -5,7 +5,7 @@ For the integrated DOM-aware, On1x-interpreted JSON rule engine, use
 regex/attribute extraction, checked locale policies, inspection ranking, conflict
 groups and fully replayed Poindexter review without changing the commands below.
 
-Dragnet combines **On1x policy/orchestration** (`src/dragnet.on1x`) with **C11
+Dragnet combines **On1x policy/orchestration** (`plugins/dragnet/dragnet.on1x`) with **C11
 adapters** (`plugins/dragnet/{workflow,transport,dragnet}.c`). It directly compiles
 and runs the upstream `include/mulib-elvi-scrape.h` interpreter against the real
 `library/elvi-scrape/google.elvs` and `bing.elvs` programs. URL encoding, heading
@@ -13,6 +13,13 @@ selection, Google redirect rewriting, Bing direct links, excluded provider hosts
 result de-duplication and bounded parsing are MuLIB operations, not replacement
 scrapers. The Makefile's upstream helper supplies their dependency closure in
 one MuLIB implementation translation unit. No upstream files were changed.
+
+All Dragnet sources, command dispatch/help, extractor registration and build
+dependencies live under `plugins/dragnet`. The default build includes Dragnet and
+Poindexter; `make PLUGINS= BUILD=build-core` builds the engine without either, and
+`make PLUGINS=dragnet BUILD=build-dragnet` includes Dragnet without the ledger/UI.
+Only Poindexter imports Dragnet's optional `poindexter.on1x` review integration.
+See [build profiles](../README.md#plugin-boundary-and-build-profiles).
 
 The current tested checkout is MuLIB
 `eeb6de585303e1ea0dfd8bf2260328289b04587c` (previous baseline:

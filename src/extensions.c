@@ -31,14 +31,15 @@ static size_t extension_count, queued_bytes, reports_bytes;
 static mulib_json_t *reports, *queue;
 static int explicit_command, failures;
 
-static const char *const event_names[] = { "capture.extracted", "observation.reviewed", "cohort.created",
-    "forecast.created", "decision.created", "optimization.created", "worksheet.opened", "worksheet.saved",
+static const char *const event_names[] = { "capture.extracted", "cohort.created",
+    "forecast.created", "decision.created", "optimization.created",
     "report.created", "demand.created" };
-static int event_valid(const char *event)
+int64_t shy_extension_event_known(const char *event)
 {
+    if (!event) return 0;
     for (size_t i = 0; i < sizeof event_names / sizeof *event_names; ++i)
         if (!strcmp(event, event_names[i])) return 1;
-    return 0;
+    return shy_builtin_event_known(event);
 }
 
 static char *relative_path(const char *file, const char *path)
@@ -291,10 +292,10 @@ static int load_extension(const char *configuration, const mulib_json_t *entry)
         capabilities(mulib_json_get(manifest, "capabilities"), &requested) && !(requested & ~grants);
     for (size_t i = 0; ok && i < extension_count; ++i) if (extensions[i].name && !strcmp(extensions[i].name, name)) ok = 0;
     const mulib_json_t *events = mulib_json_get(manifest, "events");
-    ok = ok && mulib_json_typeof(events) == MULIB_JSON_ARRAY && mulib_json_size(events) <= sizeof event_names/sizeof *event_names;
+    ok = ok && mulib_json_typeof(events) == MULIB_JSON_ARRAY && mulib_json_size(events) <= 32;
     for (size_t i = 0; ok && i < mulib_json_size(events); ++i) {
         size_t n; const char *event = mulib_json_text(mulib_json_at(events, i), &n);
-        ok = event && strlen(event) == n && event_valid(event);
+        ok = event && strlen(event) == n && shy_extension_event_known(event);
     }
     e->name = strdup(*name ? name : "invalid-extension"); e->capabilities = requested;
     if (requested & (CAP_READ | CAP_WRITE)) { e->storage = relative_path(configuration, shy_text(entry, "storage")); ok = ok && e->storage; }
@@ -344,7 +345,7 @@ int64_t shy_extensions_begin(const char *configuration)
 
 int shy_extensions_event(const char *event, const mulib_json_t *payload)
 {
-    if (!event_valid(event)) return 0;
+    if (!shy_extension_event_known(event)) return 0;
     int ok = 1;
     for (size_t i = 0; i < extension_count; ++i) {
         extension *e = &extensions[i];
@@ -362,7 +363,7 @@ int shy_extensions_enqueue(const char *event, const mulib_json_t *payload)
     if (!extension_count) return 1;
     char *text = mulib_json_stringify(payload, 0);
     size_t n = text ? strlen(text) : QUEUE_LIMIT+1; free(text);
-    if (!event_valid(event) || n > EVENT_LIMIT || queued_bytes > QUEUE_LIMIT-n || (queue && mulib_json_size(queue) >= 32)) {
+    if (!shy_extension_event_known(event) || n > EVENT_LIMIT || queued_bytes > QUEUE_LIMIT-n || (queue && mulib_json_size(queue) >= 32)) {
         diagnostic(NULL, "host", event, "extension event queue/payload limit exceeded; core result preserved"); return 0;
     }
     if (!queue) queue = mulib_json_new(MULIB_JSON_ARRAY);
@@ -394,7 +395,7 @@ int64_t shy_extension_replay_send(const char *event, const char *text)
 {
     size_t n = strlen(text);
     mulib_json_t *payload = n <= EVENT_LIMIT ? mulib_json_parse(text, n, NULL) : NULL;
-    int ok = payload && event_valid(event);
+    int ok = payload && shy_extension_event_known(event);
     if (ok) ok = shy_extensions_event(event, payload);
     else diagnostic(NULL, "host", event, "invalid replay event or payload");
     mulib_json_destroy(payload); return ok ? 0 : 2;
@@ -417,7 +418,7 @@ int64_t shy_extension_replay_end(const char *batch)
 
 int64_t shy_extensions_drain(void)
 {
-    /* Hooks run only after Poindexter releases its lock, including worker RPC. */
+    /* Hooks run only after the caller releases its lock, including worker RPC. */
     mulib_json_t *events = queue; queue = NULL; queued_bytes = 0;
     for (size_t i = 0; i < mulib_json_size(events); ++i) {
         const mulib_json_t *item = mulib_json_at(events, i);
@@ -441,7 +442,7 @@ int64_t shy_extensions_end(void)
 
 int64_t shy_extension_command(const char *configuration, const char *event, const char *payload_path)
 {
-    if (!event_valid(event)) return shy_error("unknown extension event");
+    if (!shy_extension_event_known(event)) return shy_error("unknown extension event");
     mulib_json_t *payload = read_json(payload_path, EVENT_LIMIT);
     if (!payload) return shy_error("cannot read bounded extension event JSON");
     explicit_command = 1; reports_bytes = 0; reports = mulib_json_new(MULIB_JSON_ARRAY);

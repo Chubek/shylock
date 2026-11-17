@@ -2,7 +2,6 @@
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 export SHY_ROOT="$root"
-export SHY_PROVIDER_ROOT="${SHY_PROVIDER_ROOT:-$root/third_party/mulib/library/elvi-scrape}"
 export SHY_COMMAND="${1:-help}"
 if [ "$#" -gt 0 ]; then shift; fi
 if [ "$#" -gt 8 ]; then echo "Too many arguments" >&2; exit 2; fi

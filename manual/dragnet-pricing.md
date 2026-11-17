@@ -169,8 +169,9 @@ is not a frozen historical database replay.
 
 ## Implementation and verification
 
-`src/dragnet_collection.on1x` owns collection admission, link/duplicate/status
-policy, replay and review. `src/ledger_pricing.on1x` owns selection, freshness/
+`plugins/dragnet/dragnet_collection.on1x` owns collection admission,
+link/duplicate/status policy and replay; `plugins/dragnet/poindexter.on1x` owns
+the optional ledger review/replay integration. `plugins/poindexter/ledger_pricing.on1x` owns selection, freshness/
 coverage gates and engine orchestration. Native collection, Poindexter and engine
 adapters own bounded resources and compose MuLIB primitives. There are no new
 dependencies, upstream patches or extra implementation translation units.

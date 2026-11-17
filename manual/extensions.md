@@ -129,7 +129,7 @@ still fails the phase. Formulas do not get a `host` table at all.
 
 ## Events and ordering
 
-Supported subscribed events:
+Supported subscribed events in the default build:
 
 - `capture.extracted`
 - `observation.reviewed` (accepted or rejected published review revisions)
@@ -141,6 +141,14 @@ Supported subscribed events:
 - `worksheet.saved`
 - `report.created` (successful [LaTeX report](reports.md) metadata, not its body)
 - `demand.created` (completed versioned booking-outcome demand artifacts)
+
+`observation.reviewed`, `worksheet.opened` and `worksheet.saved` are declared by
+Poindexter's build manifest and are available only when it is selected. The other
+events belong to the engine's capture, cohort and pricing contracts. Additional
+built-ins declare events through `PLUGIN_EVENTS`; see [plugin composition](plugins.md).
+Both native extension entry points and On1x replay preflight use the composed
+event vocabulary. Disabled or unknown events fail before replay hooks run.
+Each extension manifest may subscribe to at most 32 events.
 
 `on_load` runs first. Subscribed events run in order; `recommend` sends its
 forecast before its decision. CLI output events and review events are deferred

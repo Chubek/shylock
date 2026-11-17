@@ -1,7 +1,7 @@
-import "../src/dragnet_rules.on1x";
-import "../src/dragnet_strategy.on1x";
-import "../src/dragnet_rank.on1x";
-import "../src/dragnet_policy.on1x";
+import "../plugins/dragnet/dragnet_rules.on1x";
+import "../plugins/dragnet/dragnet_strategy.on1x";
+import "../plugins/dragnet/dragnet_rank.on1x";
+import "../plugins/dragnet/dragnet_policy.on1x";
 
 fn naive_policy_test()->bool {
   let (nightly,q1,e1)=nf_classify("From €120 per night","auto");

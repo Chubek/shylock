@@ -68,8 +68,8 @@ fn main() {
   # This processor runs only under the compiler's protocol. The pinned host
   # validates the complete input and replacement against PPX.schema.json in
   # ppx.cpp, and type-checks the reconstructed program. Repeating both full-tree
-  # schema walks in interpreted stdlib code exceeded the host's 60s ceiling as
-  # Dragnet grew. Keep transformation/hygiene in On1x; trust no unvalidated AST.
+  # schema walks in interpreted stdlib code exceeded the host's 60s ceiling.
+  # Keep transformation/hygiene in On1x; trust no unvalidated AST.
   if tool_env("ON1X_PPX_PROTOCOL")!="1" { tool_fail("unsupported/missing ON1X_PPX_PROTOCOL"); }
   let label=tool_env("ON1X_PPX_LABEL");
   if label!="fields" { tool_fail("invalid fields PPX label"); }

@@ -1,0 +1,53 @@
+import "poindexter.on1x";
+import "worksheet.on1x";
+import "ledger_pricing.on1x";
+import "../dragnet/poindexter.on1x";
+
+fn poindexter_command(command:string,count:i64,a:string,b:string,c:string,d:string)->i64 {
+  let integration=dragnet_ledger_command(command,count,a,b,c,d);
+  if integration>=0 { return integration; }
+  if command=="price-ledger" && (count==3 || count==4) { return price_ledger(a,b,c,d); }
+  if command=="forecast-ledger" && count==3 { return forecast_ledger(a,b,c); }
+  if command=="review" && count>=5 && count<=7 {
+    return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command=="revise" && (count==6 || count==7) {
+    return revise(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command=="reject" && (count==6 || count==7) {
+    return reject(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command=="ledger" && count==2 { return ledger(a,b); }
+  if command=="sheet" && count==2 { return worksheet_dump(a,b); }
+  if (command=="tui" || command=="gui") && count>=3 && count<=5 {
+    return worksheet(a,b,c,command,d,CLI.basis_command_line_get_env("SHY_5"));
+  }
+  if command=="history" && count==2 { return history(a,b); }
+  if command=="replay" && count==2 { return replay(a,b); }
+  if (command=="series" || command=="cohort") && count==6 {
+    var rich=0;
+    if command=="cohort" { rich=1; }
+    return series(a,b,c,parse_int(d),parse_int(CLI.basis_command_line_get_env("SHY_5")),
+      parse_int(CLI.basis_command_line_get_env("SHY_6")),rich);
+  }
+  return -1;
+}
+fn poindexter_help() {
+  println("review DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER [PAGE_HTML [CONTEXT_JSON]]");
+  println("reject DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER REASON [PAGE_HTML]");
+  println("revise DATABASE OBSERVATION_ID EXPECTED_REVIEW_ID accepted|rejected REVIEWER REASON [CONTEXT_JSON]");
+  println("ledger DATABASE COHORT");
+  println("sheet DATABASE COHORT");
+  println("tui DATABASE COHORT REVIEWER [EVENTS_JSON]");
+  println("gui DATABASE COHORT REVIEWER [EVENTS_JSON [FRAME_PPM]]");
+  println("history DATABASE OBSERVATION_ID");
+  println("replay DATABASE EXTRACTION_ID");
+  println("series DATABASE COHORT CURRENCY START STEP COUNT");
+  println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
+  println("price-ledger DATABASE SELECTION_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
+  println("forecast-ledger DATABASE SELECTION_JSON FORECAST_POLICY_JSON");
+  dragnet_ledger_help();
+}

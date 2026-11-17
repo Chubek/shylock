@@ -6,9 +6,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-int shy_plugins_init(void)
+int64_t shy_extract_plugin(const char *plugin, const char *path, const char *url, int64_t timestamp, const char *rules,
+                    const char *model_reply)
 {
-    return shy_plugin_find("dragnet") || shy_plugin_register(&shy_dragnet);
+    size_t length;
+    char *data = shy_read(path, SHY_PAGE_LIMIT, &length);
+    if (!data) return shy_error("cannot read bounded HTML capture");
+    size_t ignored;
+    char *rule = *rules ? shy_read(rules, 16384, &ignored) : NULL;
+    char *model = *model_reply ? shy_read(model_reply, 65536, &ignored) : NULL;
+    /* A missing optional model file is represented as invalid model input so
+       extraction can retain its deterministic results and a diagnostic. */
+    mulib_json_t *record = (!*rules || rule) ? shy_capture_record(data, length, url, timestamp,
+        rule ? rule : "", model ? model : (*model_reply ? "unreadable model reply" : ""), plugin) : NULL;
+    free(data);
+    free(rule);
+    free(model);
+    if (!record) return shy_error("extractor failed; check URL, capture time, site rules and snapshot limits");
+    return shy_emit(record);
 }
 
 static int identify_candidate(mulib_json_t *row, const char *html, size_t length,

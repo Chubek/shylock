@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "../../src/shylock.h"
 #include "../../src/extensions.h"
-#include "../../src/poindexter.h"
+#include "poindexter.h"
 #include "../../src/engine.h"
 #include "mulib-kvdb.h"
 #include "mulib-money.h"

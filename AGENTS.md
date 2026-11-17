@@ -66,10 +66,13 @@ make test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.on1x` | CLI workflow, stdlib argument parsing, and adjustment bounds and tick grid |
+| `src/main.on1x` | Core CLI workflow and stdlib argument parsing; plugin-neutral dispatch hooks |
 | `src/bridge.c` | Native file, digest, JSON, pricing-kernel, and Mune adapters |
 | `src/shylock.h` | Versioned snapshot-extractor descriptor and borrowed capture contract |
 | `plugins/dragnet/dragnet.c` | ElviScrape discovery, HTTPS adapter, deterministic extraction, and model reply import |
+| `plugins/dragnet/*.on1x` | Dragnet policy, orchestration, CLI and optional ledger integration |
+| `plugins/poindexter/*` | Ledger/review/cohort policy, persistence, worksheet and CLI |
+| `plugins/*/plugin.mk` | Plugin-owned native sources, headers, kernels, flags and initialization |
 | `formulas/weekend.lua` | Example `adjust_rate/v1` formula |
 | `tests/test.py` | Executable CLI integration tests using saved pages and a stubbed transport |
 
@@ -77,6 +80,13 @@ The current CLI supports `discover`, `capture`, `extract`, `estimate`,
 `recommend`, and `optimize`. Dragnet is linked at build time. Live HTTPS
 currently uses curl. The launcher hands arguments to the generated executable
 through the environment because the pinned On1x entry point takes no argv.
+
+No plugin implementation belongs in `src`. The default `PLUGINS` selection is
+`dragnet poindexter`; `PLUGINS=` builds a plugin-free engine, and
+`PLUGINS=dragnet` omits Poindexter. Poindexter explicitly requires Dragnet for
+verified replay, not vice versa. Generated composition in `BUILD` connects
+plugin-owned command/help handlers and extractor initialization to generic host
+hooks. Keep plugin-specific sources, policy and dependencies in their plugin.
 
 ## Development priorities
 
@@ -186,7 +196,7 @@ webextract-offer, price-quote and price-backtest headers are absent in that
 revision. Inspect the actual checkout before adopting those interfaces.
 
 Poindexter now provides review, ledger and series commands. Domain admission
-lives in src/poindexter.on1x. plugins/poindexter/store.c owns KVDB and JSON
+lives in plugins/poindexter/poindexter.on1x. plugins/poindexter/store.c owns KVDB and JSON
 lifetimes. Read manual/poindexter.md for the exact persistence, conflict,
 currency, gap, and reviewer contracts. The writer lock must cover open,
 read/modify and commit. Preserve idempotent imports and explicit conflict
@@ -219,7 +229,7 @@ and pricing outside the lock. Preserve full recomputation on replay, explicit
 review admission, duplicate idempotency and independent partial-extraction status.
 Read manual/dragnet-pricing.md and keep tests/collection.py passing.
 
-Poindexter worksheet review completion lives in src/worksheet_policy.on1x.
+Poindexter worksheet review completion lives in plugins/poindexter/worksheet_policy.on1x.
 Keep typed edit validation and closed-script preflight in On1x; C11 stages
 validated scalars and owns the inspected tree and frontend resources. Unknown
 currency/basis/qualifier may be resolved explicitly, but known source meaning

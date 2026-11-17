@@ -1,3 +1,5 @@
+import std.os.OS_Path as Path;
+
 extern fn shy_engine_pricing_policy(policy:string)->i64;
 extern fn shy_engine_take_demand()->i64;
 extern fn shy_engine_optimize(low:i64,high:i64,tick:i64,cost:i64,objective:string)->i64;

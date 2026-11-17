@@ -1,0 +1,66 @@
+import "dragnet.on1x";
+import "intelligence.on1x";
+import "dragnet_naive.on1x";
+import "dragnet_collection.on1x";
+import std.os.OS_Path as Path;
+
+extern fn shy_capture_page(url:string)->i64;
+
+fn dragnet_provider_root()->string {
+  let providers=CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
+  if providers!="" { return providers; }
+  return Path.basis_path_join(CLI.basis_command_line_get_env("SHY_ROOT"),"third_party/mulib/library/elvi-scrape");
+}
+fn dragnet_command(command:string,count:i64,a:string,b:string,c:string,d:string)->i64 {
+  if command=="flatten" && count==1 { return shy_flatten_command(a); }
+  if command=="find" && count==2 { return shy_find_command(a,b); }
+  if command=="find-rule" && count==3 { return naive_find(a,b,c,"deterministic","",false); }
+  if command=="find-rule" && count==4 { return naive_find(a,b,c,d,"",false); }
+  if command=="find-rule" && count==6 && CLI.basis_command_line_get_env("SHY_6")=="--live" {
+    return naive_find(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),true);
+  }
+  if command=="find-rule-replay" && count==1 { return naive_replay(a,true); }
+  if command=="collect" && count==1 { return collect(a); }
+  if command=="collect-replay" && count==1 { return collection_replay(a,true); }
+  if command=="browse" && count==1 { return browser_run(a); }
+  if command=="openai-account" && count==1 { return openai_profile(a,"","account",false); }
+  if command=="model-extract" && count==4 && d=="--live" { return openai_profile(b,a,c,true); }
+  if command=="discover-many" && count==1 { return dragnet_many(a,dragnet_provider_root()); }
+  if command=="discover" && count>=2 && count<=4 {
+    var limit=10;
+    if count==4 { limit=parse_int(d); }
+    return dragnet_discover(a,b,c,dragnet_provider_root(),limit);
+  }
+  if command=="discover-replay" && count==1 { return dragnet_replay(a); }
+  if command=="snapshot" && (count==2 || count==3) { return dragnet_snapshot(a,parse_int(b),c); }
+  if command=="extract-snapshot" && count>=1 && count<=4 {
+    var plugin=d;
+    if plugin=="" { plugin="dragnet"; }
+    return shy_dragnet_extract_snapshot(a,b,c,plugin);
+  }
+  if command=="capture" && count==1 { return shy_capture_page(a); }
+  if command=="extract" && count>=3 && count<=6 {
+    var plugin=CLI.basis_command_line_get_env("SHY_6");
+    if plugin=="" { plugin="dragnet"; }
+    return shy_extract_plugin(plugin,a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
+  }
+  return -1;
+}
+fn dragnet_help() {
+  println("browse BROWSER_JOB_JSON");
+  println("flatten SNAPSHOT_OR_IR_JSON");
+  println("find SNAPSHOT_OR_IR_JSON TARGET");
+  println("find-rule SOURCE_JSON RULE_JSON TARGET [deterministic | hybrid|model PROFILE --live]");
+  println("find-rule-replay ARTIFACT_JSON");
+  println("collect COLLECTION_JOB_JSON");
+  println("collect-replay COLLECTION_JSON");
+  println("openai-account OPENAI_PROFILE_JSON");
+  println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
+  println("discover PROVIDER QUERY [SERP_HTML [LIMIT]]");
+  println("discover-replay DISCOVERY_JSON");
+  println("discover-many DISCOVERY_JOB_JSON");
+  println("snapshot HTTPS_URL CAPTURE_UNIX_SECONDS [PAGE_HTML]");
+  println("extract-snapshot SNAPSHOT_JSON [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
+  println("capture HTTPS_URL");
+  println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
+}

@@ -1,5 +1,5 @@
 #include "sheet.h"
-#include "../../src/poindexter.h"
+#include "poindexter.h"
 #include "../../src/extensions.h"
 #include "mulib-utf8.h"
 #include <stdio.h>

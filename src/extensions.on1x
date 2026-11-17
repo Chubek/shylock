@@ -2,12 +2,7 @@ extern fn shy_extensions_enqueue_json(event:string,payload:string)->i64;
 extern fn shy_extension_replay_begin(configuration:string)->i64;
 extern fn shy_extension_replay_send(event:string,payload:string)->i64;
 extern fn shy_extension_replay_end(batch:string)->i64;
-
-fn extension_event_known(event:string)->bool {
-  return event=="capture.extracted" || event=="observation.reviewed" || event=="cohort.created" ||
-    event=="forecast.created" || event=="decision.created" || event=="optimization.created" ||
-    event=="worksheet.opened" || event=="worksheet.saved" || event=="report.created" || event=="demand.created";
-}
+extern fn shy_extension_event_known(event:string)->i64;
 
 # Validate and copy the complete batch before on_load can cause any effects.
 # A batch is an explicit saved-event replay, never a grant to mutate domain data.
@@ -24,7 +19,7 @@ fn extension_replay(configuration:string,path:string)->i64 {
   var i=0;
   while result==0 && i<count {
     if !@fields("closed","events",i,"event:string","payload:object") ||
-       !extension_event_known(shy_document_text("events",i,"event")) {
+       shy_extension_event_known(shy_document_text("events",i,"event"))!=1 {
       result=shy_error("invalid extension replay envelope or unknown event");
     } else {
       let payload=shy_document_json_at("events",i,"payload");

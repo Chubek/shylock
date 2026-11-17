@@ -1,6 +1,9 @@
 #ifndef SHYLOCK_DRAGNET_H
 #define SHYLOCK_DRAGNET_H
 #include "mulib-fetch.h"
+#include "../../src/shylock.h"
+extern const shy_plugin shy_dragnet;
+int shy_dragnet_init(void);
 /* Injected transports are trusted synchronous callbacks. MuLIB still checks
    URL policy, response size and HTML type. Live transport pins public DNS. */
 int shy_dragnet_https(void *, const char *, mulib_shylock_buffer_t *, unsigned *, char *, size_t);

@@ -45,6 +45,42 @@ The build also produces the companion `shylock-worker` executable. Keep it besid
 `shylock` when installing/copying binaries if process isolation will be used.
 The normal CLI does not require a worker at runtime when isolation is off.
 
+### Plugin boundary and build profiles
+
+`src/` contains only the engine and generic host interfaces. All Dragnet policy,
+native adapters, CLI handlers and registration live in `plugins/dragnet`; all
+Poindexter review/ledger/cohort and worksheet code lives in `plugins/poindexter`.
+Each plugin's `plugin.mk` declares its sources, kernels and external dependencies.
+It also declares plugin-specific extension events. The build generates only the selected command/help and initialization composition
+in `BUILD`; the engine does not import or register any named plugin directly.
+See [the built-in plugin contract](manual/plugins.md) to add a plugin without
+editing the engine or root Makefile.
+
+```sh
+./build.sh -j4                                      # Dragnet + Poindexter (default)
+./build.sh -j4 PLUGINS= BUILD=build-core             # No built-in plugins
+./build.sh -j4 PLUGINS=dragnet BUILD=build-dragnet    # Extraction without ledger/UI
+SHY_BINARY="$PWD/build-core/shylock" ./shylock help
+make test-plugins                                  # Build/profile boundary checks
+```
+
+The plugin-free build needs neither OpenSSL nor SDL2. Generic native SDK loading,
+explicit-plugin `extract`, formulas, extensions and pricing remain engine features.
+Dragnet owns the legacy extraction default and provider-root fallback. Disabled
+plugin commands are absent from help and return exit 2. No capture, evidence,
+review, pricing or SDK schema changes are required.
+
+Poindexter currently **requires Dragnet** for verified extraction and collection
+replay; select both plugins when using the ledger or worksheet. Its Dragnet review
+integration is loaded only with Poindexter, so Dragnet builds independently. This
+is static build selection, separate from opt-in shared-library SDK loading.
+Changing `PLUGINS` in the same `BUILD` directory invalidates the composition and
+native configuration. `make test` runs the complete default-profile suite;
+`make test-plugins` separately verifies a clean source tree with no plugins,
+an independently added built-in, native SDK loading, standalone Dragnet extraction
+and collection replay, and switching profiles in the same build directory.
+It checks native symbols, linked libraries, commands and extension-event admission.
+
 ## Discover, capture, and extract
 
 ```sh

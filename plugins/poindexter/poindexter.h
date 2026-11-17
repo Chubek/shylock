@@ -1,6 +1,6 @@
 #ifndef SHYLOCK_POINDEXTER_H
 #define SHYLOCK_POINDEXTER_H
-#include "shylock.h"
+#include "../../src/shylock.h"
 int64_t shy_store_open(const char *path);
 int64_t shy_store_close(void);
 int64_t shy_store_select(const char *cohort);

@@ -2,7 +2,7 @@
 
 The worksheet is a typed view of reviewed price observations, not a general
 accounting workbook. Both frontends use the same `shylock.worksheet/v1` model
-and On1x controller in `src/worksheet.on1x`. MuLIB TUI/vterm/termkey handle
+and On1x controller in `plugins/poindexter/worksheet.on1x`. MuLIB TUI/vterm/termkey handle
 terminal drawing and key decoding. MuLIB ImmGTK/Mune/GLX handle graphical
 cells, pointer capture and software rendering; SDL2 supplies only the desktop
 window, input events and framebuffer presentation.
@@ -191,8 +191,9 @@ stale writers, real PTY input/restoration, and SDL dummy-driver window creation
 when SDL2 was enabled. This is not a claim of testing every desktop/compositor.
 
 Typed staging, source-meaning invariants, script admission and review outcomes
-live in On1x (`src/worksheet_policy.on1x`, `src/worksheet.on1x` and
-`src/poindexter.on1x`). C11 owns snapshots, JSON scalars and frontend resources.
+live in On1x (`plugins/poindexter/worksheet_policy.on1x`,
+`plugins/poindexter/worksheet.on1x` and `plugins/poindexter/poindexter.on1x`).
+C11 owns snapshots, JSON scalars and frontend resources.
 The completion patch is approximately 41% C11 / 59% On1x (107/154 nonblank,
 noncomment implementation lines), excluding headers, imports, FFI declarations,
 tests, documentation and generated/vendor code. No new dependency or ledger

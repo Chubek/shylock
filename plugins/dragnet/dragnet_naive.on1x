@@ -48,27 +48,3 @@ fn naive_replay(path:string,emit:bool)->i64 {
   if emit || result!=0 { shy_naive_close(); }
   return result;
 }
-
-# Review and stored replay re-enter exactly the same On1x pipeline. The native
-# store receives a result only after full equality, not merely matching hashes.
-fn naive_review_load(path:string,html:string,context:string)->i64 {
-  if shy_document_open(path)!=1 { return 0; }
-  let schema=text_concat("",shy_document_text("",-1,"schema"));
-  shy_document_close();
-  if schema!="shylock.naive-find/v1" { return shy_review_load(path,html,context); }
-  if naive_replay(path,false)!=0 { shy_naive_close(); return 0; }
-  let result=shy_review_naive(html,context);
-  shy_naive_close(); return result;
-}
-fn naive_review_admissible()->bool {
-  if shy_review_is_naive()!=1 { return true; }
-  let listing=shy_review_source_field("listing_id");
-  if listing!="" && listing!=shy_review_field("listing_id") { return false; }
-  let qualifier=shy_review_source_field("qualifier");
-  if qualifier!="unknown" && qualifier!=shy_review_field("qualifier") { return false; }
-  let issue=shy_review_source_field("diagnostic");
-  let reason=shy_review_field("conflict_resolution");
-  if shy_review_conflict()==1 ||
-    (issue!="" && issue!="listing_unresolved" && issue!="listing_ambiguous") { return reason!=""; }
-  return true;
-}

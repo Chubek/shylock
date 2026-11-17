@@ -6,6 +6,10 @@
    Each extension owns a separate Mune state, never shared with formulas/UI.
    Hooks cannot change the event, a price, a review, or a host permission. */
 int64_t shy_extensions_begin(const char *configuration);
+/* Build composition supplies the enabled plugins' event vocabulary. No state
+   or plugin loading is needed to validate a replay before running any hooks. */
+int64_t shy_builtin_event_known(const char *event);
+int64_t shy_extension_event_known(const char *event);
 int shy_extensions_event(const char *event, const mulib_json_t *payload);
 int shy_extensions_enqueue(const char *event, const mulib_json_t *payload);
 int64_t shy_extensions_drain(void);

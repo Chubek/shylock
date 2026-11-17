@@ -1,5 +1,3 @@
-import "poindexter.on1x";
-import "worksheet.on1x";
 import "demand.on1x";
 import "formula.on1x";
 import "report.on1x";
@@ -8,21 +6,13 @@ import "forecast.on1x";
 import "quote.on1x";
 import "pricing.on1x";
 import "model.on1x";
-import "dragnet.on1x";
-import "intelligence.on1x";
-import "dragnet_naive.on1x";
-import "dragnet_collection.on1x";
-import "ledger_pricing.on1x";
 import std.os.CommandLine as CLI;
-import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
 
-extern fn shy_discover(provider: string, query: string, capture: string, root: string) -> i64;
-extern fn shy_extract(capture: string, url: string, captured_at: i64, rules: string, model_reply: string) -> i64;
-extern fn shy_capture_page(url: string) -> i64;
 extern fn shy_estimate(series: string, horizon: i64, emit: i64) -> i64;
 extern fn shy_error(message: string) -> i64;
 extern fn shy_plugins() -> i64;
+extern fn shy_extract_plugin(plugin:string,path:string,url:string,timestamp:i64,rules:string,model:string)->i64;
 extern fn shy_backtest(series: string, horizon: i64, training: i64) -> i64;
 extern fn shy_extensions_begin(configuration:string)->i64;
 extern fn shy_extensions_end()->i64;
@@ -43,85 +33,20 @@ fn run_command() -> i64 {
   let b = CLI.basis_command_line_get_env("SHY_2");
   let c = CLI.basis_command_line_get_env("SHY_3");
   let d = CLI.basis_command_line_get_env("SHY_4");
-  if command=="flatten" && count==1 { return shy_flatten_command(a); }
-  if command=="find" && count==2 { return shy_find_command(a,b); }
-  if command=="find-rule" && count==3 { return naive_find(a,b,c,"deterministic","",false); }
-  if command=="find-rule" && count==4 { return naive_find(a,b,c,d,"",false); }
-  if command=="find-rule" && count==6 && CLI.basis_command_line_get_env("SHY_6")=="--live" {
-    return naive_find(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),true);
-  }
-  if command=="find-rule-replay" && count==1 { return naive_replay(a,true); }
-  if command=="collect" && count==1 { return collect(a); }
-  if command=="collect-replay" && count==1 { return collection_replay(a,true); }
-  if command=="replay-collection" && count==2 { return collection_stored_replay(a,b); }
-  if command=="review-collection" && (count==6 || count==7) {
-    return collection_review(a,b,parse_int(c),parse_int(d),CLI.basis_command_line_get_env("SHY_5"),
-      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
-  }
-  if command=="price-ledger" && (count==3 || count==4) { return price_ledger(a,b,c,d); }
-  if command=="forecast-ledger" && count==3 { return forecast_ledger(a,b,c); }
-  if command=="browse" && count==1 { return browser_run(a); }
-  if command=="openai-account" && count==1 { return openai_profile(a,"","account",false); }
-  if command=="model-extract" && count==4 && d=="--live" { return openai_profile(b,a,c,true); }
+  # The build composition supplies only enabled plugins. Negative means unhandled;
+  # a plugin's failure status must never fall through to another command handler.
+  let plugin_status=builtin_plugin_command(command,count,a,b,c,d);
+  if plugin_status>=0 { return plugin_status; }
   if command=="forecast" && count==2 { return forecast(a,b); }
   if command=="quote" && count==1 { return stay_quote(a); }
   if command=="price" && (count==2 || count==3) { return price(a,b,c); }
   if command=="optimize-model" && count==1 { return optimize_model(a); }
   if command=="print-report" && count==2 { return print_report(a,b); }
   if command=="formula-test" && count==2 { return formula_test(a,b); }
-  if command == "review" && count>=5 && count<=7 {
-    return review(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
-      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
-  }
-  if command == "revise" && (count==6 || count==7) {
-    return revise(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),
-      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
-  }
-  if command == "reject" && (count==6 || count==7) {
-    return reject(a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"),
-      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
-  }
-  if command == "ledger" && count==2 { return ledger(a,b); }
-  if command == "sheet" && count==2 { return worksheet_dump(a,b); }
-  if (command=="tui" || command=="gui") && count>=3 && count<=5 {
-    return worksheet(a,b,c,command,d,CLI.basis_command_line_get_env("SHY_5"));
-  }
-  if command == "history" && count==2 { return history(a,b); }
-  if command == "replay" && count==2 { return replay(a,b); }
-  if (command == "series" || command == "cohort") && count==6 {
-    var rich=0;
-    if command == "cohort" { rich=1; }
-    return series(a,b,c,parse_int(d),parse_int(CLI.basis_command_line_get_env("SHY_5")),
-      parse_int(CLI.basis_command_line_get_env("SHY_6")),rich);
-  }
   if command == "plugins" && count==0 { return shy_plugins(); }
-  if command=="discover-many" && count==1 {
-    var providers=CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
-    if providers=="" { providers=Path.basis_path_join(CLI.basis_command_line_get_env("SHY_ROOT"),"third_party/mulib/library/elvi-scrape"); }
-    return dragnet_many(a,providers);
-  }
-  if command == "discover" && count>=2 && count<=4 {
-    let root = CLI.basis_command_line_get_env("SHY_ROOT");
-    let providers = CLI.basis_command_line_get_env("SHY_PROVIDER_ROOT");
-    var limit=10;
-    if count==4 { limit=parse_int(d); }
-    if providers == "" {
-      return dragnet_discover(a, b, c, Path.basis_path_join(root, "third_party/mulib/library/elvi-scrape"),limit);
-    }
-    return dragnet_discover(a, b, c, providers,limit);
-  }
-  if command=="discover-replay" && count==1 { return dragnet_replay(a); }
-  if command=="snapshot" && (count==2 || count==3) { return dragnet_snapshot(a,parse_int(b),c); }
-  if command=="extract-snapshot" && count>=1 && count<=4 {
-    var plugin=d;
-    if plugin=="" { plugin="dragnet"; }
-    return shy_dragnet_extract_snapshot(a,b,c,plugin);
-  }
-  if command == "capture" && count == 1 { return shy_capture_page(a); }
-  if command == "extract" && count >= 3 && count <= 6 {
-    var plugin=CLI.basis_command_line_get_env("SHY_6");
-    if plugin=="" { plugin="dragnet"; }
-    return shy_extract_plugin(plugin,a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
+  if command=="extract" && count==6 && CLI.basis_command_line_get_env("SHY_6")!="" {
+    return shy_extract_plugin(CLI.basis_command_line_get_env("SHY_6"),a,b,parse_int(c),d,
+      CLI.basis_command_line_get_env("SHY_5"));
   }
   if command == "estimate" && count == 2 {
     return shy_estimate(a, parse_int(b), 1);
@@ -152,29 +77,9 @@ fn run_command() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_7")));
   }
   if command == "help" || command == "" {
-    println("review DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER [PAGE_HTML [CONTEXT_JSON]]");
-    println("reject DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER REASON [PAGE_HTML]");
-    println("revise DATABASE OBSERVATION_ID EXPECTED_REVIEW_ID accepted|rejected REVIEWER REASON [CONTEXT_JSON]");
-    println("ledger DATABASE COHORT");
-    println("sheet DATABASE COHORT");
-    println("tui DATABASE COHORT REVIEWER [EVENTS_JSON]");
-    println("gui DATABASE COHORT REVIEWER [EVENTS_JSON [FRAME_PPM]]");
-    println("history DATABASE OBSERVATION_ID");
-    println("replay DATABASE EXTRACTION_ID");
-    println("series DATABASE COHORT CURRENCY START STEP COUNT");
-    println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
+    builtin_plugin_help();
     println("plugins");
-    println("browse BROWSER_JOB_JSON");
-    println("flatten SNAPSHOT_OR_IR_JSON");
-    println("find SNAPSHOT_OR_IR_JSON TARGET");
-    println("find-rule SOURCE_JSON RULE_JSON TARGET [deterministic | hybrid|model PROFILE --live]");
-    println("find-rule-replay ARTIFACT_JSON");
-    println("collect COLLECTION_JOB_JSON");
-    println("collect-replay COLLECTION_JSON");
-    println("replay-collection DATABASE COLLECTION_ID");
-    println("review-collection DATABASE COLLECTION_JSON ENTRY CANDIDATE COHORT REVIEWER [CONTEXT_JSON]");
-    println("openai-account OPENAI_PROFILE_JSON");
-    println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
+    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS SITE_RULES MODEL_REPLY_JSON PLUGIN");
     println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
     println("extension-replay CONFIG_JSON EVENTS_JSON");
     println("formula-test FORMULA CASES_JSON");
@@ -182,16 +87,7 @@ fn run_command() -> i64 {
     println("forecast SERIES_JSON FORECAST_POLICY_JSON");
     println("quote QUOTE_INPUT_JSON");
     println("price COHORT_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
-    println("price-ledger DATABASE SELECTION_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
-    println("forecast-ledger DATABASE SELECTION_JSON FORECAST_POLICY_JSON");
     println("optimize-model MODEL_POLICY_JSON");
-    println("discover PROVIDER QUERY [SERP_HTML [LIMIT]]");
-    println("discover-replay DISCOVERY_JSON");
-    println("discover-many DISCOVERY_JOB_JSON");
-    println("snapshot HTTPS_URL CAPTURE_UNIX_SECONDS [PAGE_HTML]");
-    println("extract-snapshot SNAPSHOT_JSON [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
-    println("capture HTTPS_URL");
-    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
     println("estimate SERIES_JSON HORIZON");
     println("backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES");
     println("recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK");

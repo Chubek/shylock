@@ -51,16 +51,18 @@ typedef struct {
 int shy_plugin_register(const shy_plugin *plugin);
 const shy_plugin *shy_plugin_find(const char *name);
 const shy_plugin *shy_plugin_at(size_t index);
+/* The build composition initializes enabled built-ins; the core names none. */
 int shy_plugins_init(void);
 int shy_plugin_extract(const shy_plugin *, const shy_capture *, mulib_json_t *);
 const char *shy_plugin_configuration(const shy_plugin *);
 int64_t shy_native_plugins_begin(const char *configuration);
 int64_t shy_native_plugins_end(void);
-extern const shy_plugin shy_dragnet;
 /* Caller owns returned record. Sources are copied into replay provenance. */
 mulib_json_t *shy_capture_record(const char *html, size_t length, const char *url,
     int64_t timestamp, const char *rules, const char *model, const char *plugin);
 int shy_verify_capture(const mulib_json_t *record, const char *html, size_t length);
+int64_t shy_extract_plugin(const char *plugin, const char *path, const char *url,
+    int64_t timestamp, const char *rules, const char *model_reply);
 /* Numeric samples are copied; lineage, when present, is caller-owned. */
 int shy_series_load(const char *path, double values[4096], size_t *count,
     char digest[65], mulib_json_t **lineage);

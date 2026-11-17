@@ -7,13 +7,18 @@ Read the repository's `../../AGENTS.md`, `manual/dragnet.md`, `manual/intelligen
 
 ## Ownership of decisions
 
-- Keep rule admission/defaults in `src/dragnet_rules.on1x`, DOM strategy/listing
-  association and English classification in `src/dragnet_strategy.on1x`, currency/
-  amount/conflict/consent policy in `src/dragnet_policy.on1x`, inspection scores in
-  `src/dragnet_rank.on1x` and evidence assembly in `src/dragnet_evidence.on1x`.
-- `src/dragnet_naive.on1x` owns command, replay, review and fallback orchestration.
-  `src/dragnet_collection.on1x` owns offline collection links, duplicates, statuses
-  and composed review/replay. `src/ledger_pricing.on1x` owns reviewed-ledger
+- Keep all Dragnet implementation and build wiring under `plugins/dragnet`, not
+  `src`. Rule admission/defaults live in `plugins/dragnet/dragnet_rules.on1x`, DOM
+  strategy/listing association and English classification in
+  `plugins/dragnet/dragnet_strategy.on1x`, currency/amount/conflict/consent policy in
+  `plugins/dragnet/dragnet_policy.on1x`, inspection scores in
+  `plugins/dragnet/dragnet_rank.on1x` and evidence assembly in
+  `plugins/dragnet/dragnet_evidence.on1x`.
+- `plugins/dragnet/dragnet_naive.on1x` owns extraction, replay and fallback
+  orchestration. `plugins/dragnet/dragnet_collection.on1x` owns offline collection
+  links, duplicates, statuses and replay. Optional ledger review/replay integration
+  lives in `plugins/dragnet/poindexter.on1x`, imported only by Poindexter.
+  `plugins/poindexter/ledger_pricing.on1x` owns reviewed-ledger
   selection, freshness/coverage gates and forecast/pricing orchestration. See
   `manual/dragnet-pricing.md`; keep these policies out of native resource adapters.
   Do not move these workflows into C or introduce a thin-wrapper architecture.
@@ -21,9 +26,10 @@ Read the repository's `../../AGENTS.md`, `manual/dragnet.md`, `manual/intelligen
   the measurement scope, excluding tests, generated code, docs and dependencies.
 - C is for MuLIB calls, checked money, regexes, Unicode/entity/source mapping,
   structural facts, generation handles and lifetimes. Declare scalar ABI functions
-  in `naive.h` and `src/dragnet_native.on1x`. Never expose a borrowed tree pointer.
+  in `naive.h` and `plugins/dragnet/dragnet_native.on1x`. Never expose a borrowed tree pointer.
 - Use upstream standard library and kernels first. Include declarations only in
-  adapters; add kernels to Makefile's normal **and allocation-test** helper calls.
+  adapters; declare kernels in `plugins/dragnet/plugin.mk`, shared by the normal
+  **and allocation-test** helper calls.
   Preserve its single implementation translation unit and GNU Make build.
 
 ## Safe changes

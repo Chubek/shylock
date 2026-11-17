@@ -1,0 +1,75 @@
+# Optional integration, imported by Poindexter only. Standalone extraction and
+# collection replay have no dependency on the ledger or its native store.
+
+# Review and stored replay re-enter exactly the same On1x pipeline. The native
+# store receives a result only after full equality, not merely matching hashes.
+fn naive_review_load(path:string,html:string,context:string)->i64 {
+  if shy_document_open(path)!=1 { return 0; }
+  let schema=text_concat("",shy_document_text("",-1,"schema"));
+  shy_document_close();
+  if schema!="shylock.naive-find/v1" { return shy_review_load(path,html,context); }
+  if naive_replay(path,false)!=0 { shy_naive_close(); return 0; }
+  let result=shy_review_naive(html,context);
+  shy_naive_close(); return result;
+}
+fn naive_review_admissible()->bool {
+  if shy_review_is_naive()!=1 { return true; }
+  let listing=shy_review_source_field("listing_id");
+  if listing!="" && listing!=shy_review_field("listing_id") { return false; }
+  let qualifier=shy_review_source_field("qualifier");
+  if qualifier!="unknown" && qualifier!=shy_review_field("qualifier") { return false; }
+  let issue=shy_review_source_field("diagnostic");
+  let reason=shy_review_field("conflict_resolution");
+  if shy_review_conflict()==1 ||
+    (issue!="" && issue!="listing_unresolved" && issue!="listing_ambiguous") { return reason!=""; }
+  return true;
+}
+fn collection_stored_replay(database:string,id:string)->i64 {
+  if shy_store_open(database)!=1 { return 2; }
+  let loaded=shy_store_collection_begin(id); shy_store_close();
+  if loaded!=1 { shy_collection_close(); return shy_error("cannot read retained collection"); }
+  let target=text_concat("",shy_collection_target());
+  let status=collection_run(target,sx_nil(),true,true);
+  shy_document_close(); shy_collection_close(); return status;
+}
+fn collection_review_source(entry:i64,context:string)->bool {
+  if shy_collection_review_begin(entry)!=1 {
+    shy_error("collection entry is out of range or not replay-verified"); return false;
+  }
+  if naive_replay_loaded(false)!=0 { return false; }
+  if shy_review_naive("",context)!=1 {
+    shy_error("cannot load collection review snapshot or context"); return false;
+  }
+  if shy_review_collection(entry)!=1 {
+    shy_error("cannot retain immutable collection lineage"); return false;
+  }
+  return true;
+}
+fn collection_review(database:string,path:string,entry:i64,candidate:i64,cohort:string,reviewer:string,context:string)->i64 {
+  if entry<0 || candidate<0 || cohort=="" || reviewer=="" { return shy_error("invalid collection review inputs"); }
+  # Full replay precedes a ledger write. Duplicate entries retain the same
+  # evidence IDs, so retries cannot become independent market observations.
+  let replayed=collection_replay(path,false);
+  if replayed!=0 && shy_collection_ready()!=1 { return 2; }
+  var status=2;
+  if shy_store_open(database)==1 && collection_review_source(entry,context) && shy_review_prepare(candidate)==1 {
+    if review_admissible() {
+      var reason="initial acceptance";
+      if shy_review_field("conflict_resolution")!="" { reason=shy_review_field("conflict_resolution"); }
+      status=shy_review_save(candidate,cohort,reviewer,"accepted",reason);
+    } else { shy_error("collection candidate requires comparable context and explicit conflict review"); }
+  }
+  shy_store_close(); shy_naive_close(); shy_collection_close(); return status;
+}
+fn dragnet_ledger_command(command:string,count:i64,a:string,b:string,c:string,d:string)->i64 {
+  if command=="replay-collection" && count==2 { return collection_stored_replay(a,b); }
+  if command=="review-collection" && (count==6 || count==7) {
+    return collection_review(a,b,parse_int(c),parse_int(d),CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  return -1;
+}
+fn dragnet_ledger_help() {
+  println("replay-collection DATABASE COLLECTION_ID");
+  println("review-collection DATABASE COLLECTION_JSON ENTRY CANDIDATE COHORT REVIEWER [CONTEXT_JSON]");
+}

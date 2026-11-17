@@ -403,6 +403,15 @@ static int extract(const shy_capture *capture, mulib_json_t *items)
 
 const shy_plugin shy_dragnet = { SHY_EXTRACTOR_ABI, sizeof(shy_plugin), "dragnet", "dragnet/v3", extract };
 
+int shy_dragnet_init(void)
+{
+    const shy_plugin *registered = shy_plugin_find(shy_dragnet.name);
+    return registered == &shy_dragnet || (!registered && shy_plugin_register(&shy_dragnet));
+}
+
+int64_t shy_extract(const char *path, const char *url, int64_t timestamp, const char *rules, const char *model)
+{ return shy_extract_plugin("dragnet", path, url, timestamp, rules, model); }
+
 int64_t shy_capture_page(const char *url)
 {
     mulib_shylock_buffer_t body = { 0 };
