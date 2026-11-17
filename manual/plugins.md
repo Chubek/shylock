@@ -53,13 +53,20 @@ The CLI module imports its implementation and defines:
 
 ```text
 fn NAME_command(command:string,count:i64,a:string,b:string,c:string,d:string)->i64
-fn NAME_help()
+fn NAME_help(topic:string,color:bool)->bool
 ```
 
 The launcher supplies the command's first four arguments directly, with remaining
 arguments available as `SHY_5` through `SHY_8` via the CommandLine standard library.
 Return `-1` when unhandled, or a nonnegative CLI exit status when handled. A handled
-failure must retain its exit status. Help prints the commands owned by the plugin.
+failure must retain its exit status. Help receives an empty topic for the command
+index, or an exact command name for a detailed page; return true when handled.
+Use the shared On1x `help_entry(topic,color,name,usage,summary,arguments,notes,
+examples,manual)` renderer for consistent styling. It prints an index row and
+returns false for an empty topic, so a sequence of entries can render the whole
+index. Each detailed page should include at least three invocation examples.
+Help handlers must be pure output: they run before native initialization and
+extension hooks, even if the runtime configuration is invalid.
 The generated composition calls handlers in normalized plugin-name order before
 the core dispatcher. Plugins should use distinct command names.
 

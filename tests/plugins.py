@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 
+from help import CORE, DRAGNET, POINDEXTER
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -89,6 +91,14 @@ def profiles(compiler, mulib):
 
         fixtures = ROOT / "tests/fixtures"
 
+        def help_checks(expected):
+            names = re.findall(r"^  ([a-z][a-z-]*) {2,}", run("help", raw=True), re.M)
+            assert len(names) == len(set(names)) and set(names) == expected, names
+            for name in names:
+                assert run("help", name, raw=True).startswith(f"shylock {name}\n"), name
+            for name in (CORE | DRAGNET | POINDEXTER) - expected:
+                assert run("help", name, code=2) is None
+
         def save(name, value):
             path = root / name
             path.write_text(json.dumps(value))
@@ -118,10 +128,13 @@ def profiles(compiler, mulib):
 
         def core_checks():
             assert run("plugins") == []
+            help_checks(CORE)
             help_text = run("help", raw=True)
             for command in ("discover", "snapshot", "flatten", "find-rule", "collect", "review", "ledger", "sheet", "tui", "gui"):
-                assert not any(line.startswith(command + " ") for line in help_text.splitlines()), command
+                assert not any(line.lstrip().startswith(command + " ") for line in help_text.splitlines()), command
                 assert run(command, code=2) is None
+                assert run("help", command, code=2) is None
+                assert run(command, "--help", code=2) is None
             assert run("discover", "google", "lake", fixtures / "google.html", code=2) is None
             assert run("review", "unused.db", "unused.json", 0, "market", "reviewer", code=2) is None
             assert not (root / "unused.db").exists()
@@ -171,7 +184,11 @@ PLUGIN_EVENTS += fixture.ready
   if command=="probe" && count==0 { println("probe handled"); return 7; }
   return -1;
 }
-fn probe_help() { println("probe"); }
+fn probe_help(topic:string,color:bool)->bool {
+  return help_entry(topic,color,"probe","probe","Probe plugin command.",
+    "  No arguments.","  Test fixture.",
+    "  ./shylock probe\\n  ./shylock probe\\n  ./shylock probe","Test fixture.");
+}
 ''')
         (plugin / "probe.h").write_text("int probe_init(void);\n")
         (plugin / "probe.c").write_text('''#include "../../src/shylock.h"
@@ -183,9 +200,12 @@ int probe_init(void)
 { const shy_plugin *p=shy_plugin_find("probe"); return p==&probe || (!p && shy_plugin_register(&probe)); }
 ''')
         build("probe probe")
+        help_checks(CORE | {"probe"})
         assert run("plugins") == [{"name": "probe", "version": "probe/v1", "abi": 2}]
         assert run("probe", code=7, raw=True) == "probe handled\n"
-        assert run("help", raw=True).splitlines().count("probe") == 1
+        assert len(re.findall(r"^  probe +Probe plugin command\.", run("help", raw=True), re.M)) == 1
+        assert "Probe plugin command." in run("help", "probe", raw=True)
+        assert "Probe plugin command." in run("probe", "--help", raw=True)
         manifest_data = json.loads(manifest.read_text())
         manifest_data["events"] = ["fixture.ready"]
         manifest.write_text(json.dumps(manifest_data))
@@ -199,6 +219,7 @@ int probe_init(void)
 
         shutil.copytree(ROOT / "plugins/dragnet", root / "plugins/dragnet")
         build("dragnet")
+        help_checks(CORE | DRAGNET)
         assert [item["name"] for item in run("plugins")] == ["dragnet"]
         assert run("ledger", "unused.db", "market", code=2) is None
         discovery = run("discover", "google", "lake cottage", fixtures / "google.html")

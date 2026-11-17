@@ -1,6 +1,7 @@
 # Makefile output. Add a local exclude if you override BUILD.
 /build/
 build*
+!/build.sh
 
 # Python tooling
 __pycache__/

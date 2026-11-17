@@ -1,3 +1,4 @@
+import "help.on1x";
 import "dragnet.on1x";
 import "intelligence.on1x";
 import "dragnet_naive.on1x";
@@ -45,22 +46,4 @@ fn dragnet_command(command:string,count:i64,a:string,b:string,c:string,d:string)
     return shy_extract_plugin(plugin,a,b,parse_int(c),d,CLI.basis_command_line_get_env("SHY_5"));
   }
   return -1;
-}
-fn dragnet_help() {
-  println("browse BROWSER_JOB_JSON");
-  println("flatten SNAPSHOT_OR_IR_JSON");
-  println("find SNAPSHOT_OR_IR_JSON TARGET");
-  println("find-rule SOURCE_JSON RULE_JSON TARGET [deterministic | hybrid|model PROFILE --live]");
-  println("find-rule-replay ARTIFACT_JSON");
-  println("collect COLLECTION_JOB_JSON");
-  println("collect-replay COLLECTION_JSON");
-  println("openai-account OPENAI_PROFILE_JSON");
-  println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
-  println("discover PROVIDER QUERY [SERP_HTML [LIMIT]]");
-  println("discover-replay DISCOVERY_JSON");
-  println("discover-many DISCOVERY_JOB_JSON");
-  println("snapshot HTTPS_URL CAPTURE_UNIX_SECONDS [PAGE_HTML]");
-  println("extract-snapshot SNAPSHOT_JSON [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
-  println("capture HTTPS_URL");
-  println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]");
 }

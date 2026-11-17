@@ -1,0 +1,108 @@
+# Shared renderer in help.on1x; command descriptions remain beside their owners.
+fn core_help(topic:string,color:bool)->bool {
+  if topic=="" { help_heading("Pricing and analysis",color); }
+  if help_entry(topic,color,"forecast","forecast SERIES_JSON FORECAST_POLICY_JSON",
+    "Evaluate forecasting models and publish a forecast.",
+    "  SERIES_JSON           Price history or reviewed cohort file.\n  FORECAST_POLICY_JSON  Models, horizon, training and validation settings.",
+    "  Reports chronological evaluation and coverage. Inspect status before using\n  numeric results. See policies/forecast.json and policies/seasonal.json.",
+    "  ./shylock forecast tests/fixtures/series.json policies/forecast.json\n  ./shylock forecast tests/fixtures/seasonal-history.json policies/seasonal.json\n  ./shylock forecast cohort.json policies/forecast.json > forecast.json",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"price","price COHORT_JSON PRICING_POLICY_JSON [DEMAND_JSON]",
+    "Turn a reviewed cohort and policy into an audited price decision.",
+    "  COHORT_JSON          Reviewed comparable observations with lineage.\n  PRICING_POLICY_JSON  Forecast, formula, constraints, charges and as_of cutoff.\n  DEMAND_JSON          Optional compatible booking-demand artifact.",
+    "  Requires complete intervals at as_of. The policy selects the decision kind.\n  Failed/model-error artifacts are inspectable, not valid numeric recommendations.",
+    "  ./shylock price cohort.json policies/pricing.json\n  ./shylock price cohort.json pricing-policy.json > decision.json\n  ./shylock price cohort.json demand-policy.json demand.json",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"quote","quote QUOTE_INPUT_JSON",
+    "Compute a stay total with checked fees and taxes.",
+    "  QUOTE_INPUT_JSON  Currency, scale, nightly rate and charges; use the\n                    shylock.quote-input/v1 schema in policies/quote.json.",
+    "  Charges specify nights, cleaning/other fees, tax rate, mode and scope.\n  Money is integer minor units; tax rates are basis points (100 bp = 1%).",
+    "  ./shylock quote policies/quote.json\n  ./shylock quote policies/quote.json > quote.json\n  ./shylock quote weekend-stay.json",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"estimate","estimate SERIES_JSON HORIZON",
+    "Estimate a market reference from an equally spaced history.",
+    "  SERIES_JSON  Saved price series or reviewed cohort export.\n  HORIZON      Positive number of sampling intervals ahead.",
+    "  Preserves the legacy estimation interface. Use forecast for model selection\n  and chronological evaluation; prices are expressed in integer minor units.",
+    "  ./shylock estimate tests/fixtures/series.json 1\n  ./shylock estimate tests/fixtures/series.json 2\n  ./shylock estimate cohort.json 1 > estimate.json",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"backtest","backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES",
+    "Measure forecast error using chronological training cutoffs.",
+    "  SERIES_JSON           Equally spaced price history or reviewed cohort.\n  HORIZON               Positive forecast distance in sampling intervals.\n  MIN_TRAINING_SAMPLES   Minimum history available before each prediction.",
+    "  Keep enough samples for training and held-out outcomes. Reports coverage\n  and error; missing or future observations cannot become training evidence.",
+    "  ./shylock backtest tests/fixtures/series.json 1 3\n  ./shylock backtest tests/fixtures/seasonal-history.json 2 8\n  ./shylock backtest cohort.json 1 3 > backtest.json",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"recommend","recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK",
+    "Forecast a reference and apply a bounded Lua rate formula.",
+    "  SERIES_JSON / HORIZON  History file and positive forecast distance.\n  FORMULA                Lua file implementing adjust_rate/v1.\n  WEEKEND                0 for weekday, 1 for weekend.\n  PREMIUM_BP             Premium in basis points; 1500 means 15%.\n  FLOOR / CAP / TICK     Minimum, maximum and grid step in minor units.",
+    "  Formulas run in fresh restricted Mune states. The host enforces bounds and\n  tick rounding. Formula errors retain the unadjusted forecast in the audit.",
+    "  ./shylock recommend tests/fixtures/series.json 1 formulas/weekend.lua 1 1500 10000 30000 100\n  ./shylock recommend tests/fixtures/series.json 2 formulas/identity.lua 0 0 10000 30000 100\n  ./shylock recommend cohort.json 1 formulas/weekend.lua 0 1000 10000 25000 100",
+    "manual/pricing.md") { return true; }
+  if help_entry(topic,color,"adjust","adjust FORMULA REFERENCE_MINOR WEEKEND PREMIUM_BP FLOOR CAP TICK",
+    "Apply a rate formula to an explicit reference amount.",
+    "  FORMULA          Lua file implementing adjust_rate/v1.\n  REFERENCE_MINOR  Nonnegative reference in integer minor units.\n  WEEKEND          0 or 1.\n  PREMIUM_BP       Premium in basis points (100 bp = 1%).\n  FLOOR / CAP      Lower and upper minor-unit bounds.\n  TICK             Positive minor-unit price increment.",
+    "  Uses a fresh restricted Mune state. Bounds and tick are applied by On1x.\n  The audit retains formula provenance, inputs, constraints and outcome.",
+    "  ./shylock adjust formulas/weekend.lua 18000 1 1500 10000 30000 100\n  ./shylock adjust formulas/weekend.lua 18000 0 1500 10000 30000 100\n  ./shylock adjust formulas/identity.lua 18050 0 0 10000 30000 100",
+    "manual/formulas.md") { return true; }
+  if help_entry(topic,color,"demand","demand BOOKING_OUTCOMES_JSON AS_OF CAPACITY MIN_SAMPLES",
+    "Build a demand artifact from finalized booking outcomes.",
+    "  BOOKING_OUTCOMES_JSON  Explicit booked/not_booked listing-night outcomes.\n  AS_OF                 Inclusive Unix-seconds cutoff.\n  CAPACITY              Available units, 1..1000000.\n  MIN_SAMPLES           Required observations per rate, 1..4096.",
+    "  Asking prices and unavailable calendar nights are not booking outcomes.\n  Duplicate opportunities are reconciled; conflicting outcomes return exit 3.",
+    "  ./shylock demand tests/fixtures/booking-outcomes.json 1793500000 10 2\n  ./shylock demand bookings.json 1793000000 5 3 > demand.json\n  ./shylock demand bookings.json 1794000000 10 5",
+    "manual/demand.md") { return true; }
+  if help_entry(topic,color,"optimize","optimize DEMAND_JSON FLOOR CAP TICK UNIT_COST",
+    "Choose a feasible rate using supplied expected demand.",
+    "  DEMAND_JSON  Expected-demand grid or supported demand artifact.\n  FLOOR / CAP  Allowed rate bounds in integer minor units.\n  TICK         Positive grid increment in minor units.\n  UNIT_COST    Cost per sold unit in minor units.",
+    "  Demand is supplied explicitly; asking-price history alone does not provide\n  it. Infeasible grids fail instead of inventing a recommendation.",
+    "  ./shylock optimize tests/fixtures/demand.json 10000 30000 100 2000\n  ./shylock optimize tests/fixtures/demand.json 15000 25000 100 3000\n  ./shylock optimize demand.json 10000 30000 100 2000 > optimized.json",
+    "manual/demand.md") { return true; }
+  if help_entry(topic,color,"optimize-model","optimize-model MODEL_POLICY_JSON",
+    "Optimize against explicit demand models and risk settings.",
+    "  MODEL_POLICY_JSON  shylock.model-policy/v1 with currency, scale, model\n                     weights, risk and rate/cost/margin constraints.",
+    "  Model parameters are external assumptions, not learned booking demand.\n  See policies/model.json for a complete input example.",
+    "  ./shylock optimize-model policies/model.json\n  ./shylock optimize-model policies/model.json > model-decision.json\n  ./shylock optimize-model conservative-model.json",
+    "manual/pricing.md") { return true; }
+  if topic=="" { help_heading("Formulas, reports and extensions",color); }
+  if help_entry(topic,color,"formula-test","formula-test FORMULA CASES_JSON",
+    "Check a formula against explicit cases and expected results.",
+    "  FORMULA     Lua adjust_rate/v1 source file.\n  CASES_JSON  shylock.formula-cases/v1 inputs, bounds and expected minor units.",
+    "  Each case uses a fresh restricted runtime. Output retains source hashes,\n  expected values, actual results and case outcomes.",
+    "  ./shylock formula-test formulas/weekend.lua formulas/cases/weekend.json\n  ./shylock formula-test formulas/capped-weekend.lua formulas/cases/capped-weekend.json\n  ./shylock formula-test formulas/weekday-discount.lua formulas/cases/weekday-discount.json",
+    "manual/formulas.md") { return true; }
+  if help_entry(topic,color,"print-report","print-report TEMPLATE_JSON DATA_JSON",
+    "Render an escaped LaTeX report from a template and artifact.",
+    "  TEMPLATE_JSON  Report template with sections and JSON Pointer fields.\n  DATA_JSON      Saved decision, forecast or other compatible data artifact.",
+    "  Writes LaTeX to stdout. PDF compilation is a separate external step.\n  Match the template to the artifact schema; see reports/ for examples.",
+    "  ./shylock print-report reports/pricing.json decision.json > decision.tex\n  ./shylock print-report reports/evaluated-forecast.json forecast.json > forecast.tex\n  ./shylock print-report reports/formula-tests.json formula-results.json > formulas.tex",
+    "manual/reports.md") { return true; }
+  if help_entry(topic,color,"extension","extension CONFIG_JSON EVENT PAYLOAD_JSON",
+    "Deliver an explicit event to configured effectful extensions.",
+    "  CONFIG_JSON   Extension manifests and scoped capability grants.\n  EVENT         Event name supported by this build, e.g. decision.created.\n  PAYLOAD_JSON  File containing the event payload.",
+    "  Runs extension lifecycle hooks with explicitly granted capabilities.\n  This lifecycle is independent of the restricted calculation environment.",
+    "  ./shylock extension extensions/example.json decision.created decision.json\n  ./shylock extension extensions/monitor.json decision.created decision.json\n  SHY_SANDBOX=process ./shylock extension extensions/monitor.json decision.created decision.json",
+    "manual/extensions.md") { return true; }
+  if help_entry(topic,color,"extension-replay","extension-replay CONFIG_JSON EVENTS_JSON",
+    "Validate and replay a saved batch of extension events.",
+    "  CONFIG_JSON  Extension configuration with grants and storage.\n  EVENTS_JSON  shylock.extension-events/v1 batch of event/payload objects.",
+    "  Validates the complete batch before lifecycle effects begin. Supported\n  event names depend on the built-in plugins selected at build time.",
+    "  ./shylock extension-replay extensions/monitor.json extensions/events/example.json\n  SHY_SANDBOX=process ./shylock extension-replay extensions/monitor.json extensions/events/example.json\n  ./shylock extension-replay extensions/monitor.json saved-events.json",
+    "manual/extensions.md") { return true; }
+  if topic=="" { help_heading("Driver and extractor registry",color); }
+  if help_entry(topic,color,"plugins","plugins","List registered snapshot extractors and their versions.",
+    "  No positional arguments.",
+    "  Built-ins reflect this build. SHY_NATIVE_PLUGINS names an optional native\n  SDK configuration file; listing loads those configured native libraries.",
+    "  ./shylock plugins\n  ./shylock plugins > extractors.json\n  SHY_NATIVE_PLUGINS=native-plugins.json ./shylock plugins",
+    "manual/sdk.md") { return true; }
+  if help_entry(topic,color,"extract","extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS SITE_RULES MODEL_REPLY_JSON PLUGIN",
+    "Extract evidence from saved HTML using a registered extractor.",
+    "  PAGE_HTML             Original saved HTML file.\n  SOURCE_URL            Source URL retained as provenance.\n  CAPTURE_UNIX_SECONDS  Asserted capture time.\n  SITE_RULES            Rules file, or '' for none.\n  MODEL_REPLY_JSON      Saved model reply, or '' for none.\n  PLUGIN                Registered extractor name.",
+    "  Builds with a default extractor may omit the last three inputs; see its\n  command help. Explicit native extractors require all six positions. Saved\n  model replies are imported evidence, not permission for live model calls.",
+    "  ./shylock extract page.html https://example.org/cottage 1760000000 '' '' fixed-price\n  SHY_NATIVE_PLUGINS=native-plugins.json ./shylock extract page.html https://example.org/cottage 1760000000 '' '' fixed-price\n  ./shylock extract page.html https://example.org/cottage 1760000060 rules.json '' custom-extractor",
+    "manual/sdk.md") { return true; }
+  if help_entry(topic,color,"help","help [COMMAND] [--color=auto|always|never]",
+    "Browse commands, arguments and worked invocation examples.",
+    "  COMMAND  Optional command name from this build's help index.\n  --color  auto (default), always, or never. Also accepts -h and --help.",
+    "  Help runs before plugin or extension initialization and never reads command\n  input files. Auto color respects terminal output, TERM, NO_COLOR and FORCE_COLOR.\n  Explicit always/never overrides environment settings. Unknown topics exit 2.",
+    "  ./shylock help\n  ./shylock help recommend\n  ./shylock forecast --help --color=always",
+    "README.md") { return true; }
+  return topic=="";
+}

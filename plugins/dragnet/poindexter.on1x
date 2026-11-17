@@ -69,7 +69,19 @@ fn dragnet_ledger_command(command:string,count:i64,a:string,b:string,c:string,d:
   }
   return -1;
 }
-fn dragnet_ledger_help() {
-  println("replay-collection DATABASE COLLECTION_ID");
-  println("review-collection DATABASE COLLECTION_JSON ENTRY CANDIDATE COHORT REVIEWER [CONTEXT_JSON]");
+fn dragnet_ledger_help(topic:string,color:bool)->bool {
+  if topic=="" { help_heading("Collection review integration",color); }
+  if help_entry(topic,color,"review-collection","review-collection DATABASE COLLECTION_JSON ENTRY CANDIDATE COHORT REVIEWER [CONTEXT_JSON]",
+    "Replay a collection and explicitly review one selected candidate.",
+    "  DATABASE / COLLECTION_JSON  Ledger and saved collection artifact.\n  ENTRY / CANDIDATE           Zero-based collection entry and candidate index.\n  COHORT / REVIEWER           Comparison group and reviewer identity.\n  CONTEXT_JSON                Optional resolved stay/listing/tax/fee context.",
+    "  Full replay precedes writes. Preserves collection links and duplicate\n  idempotency. Rankings never approve evidence; unresolved context and\n  conflicting amounts require explicit review before admission.",
+    "  ./shylock review-collection prices.db collection.json 0 0 market alice context.json\n  ./shylock review-collection prices.db collection.json 1 0 market alice context.json\n  ./shylock review-collection prices.db apartments-collection.json 0 0 apartments bob apartment-context.json",
+    "manual/dragnet-pricing.md") { return true; }
+  if help_entry(topic,color,"replay-collection","replay-collection DATABASE COLLECTION_ID",
+    "Recompute and verify a collection retained in the ledger.",
+    "  DATABASE       Ledger containing a previously reviewed collection.\n  COLLECTION_ID  Stable ID from the collection or ledger lineage.",
+    "  Copies the retained artifact, releases the lock, then replays the entire\n  collection offline. Set the shell variables to IDs from saved output.",
+    "  ./shylock replay-collection prices.db \"$COLLECTION_ID\"\n  ./shylock replay-collection prices.db \"$COLLECTION_ID\" > replayed-collection.json\n  ./shylock replay-collection prices.db \"$OTHER_COLLECTION_ID\"",
+    "manual/dragnet-pricing.md") { return true; }
+  return topic=="";
 }

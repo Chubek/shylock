@@ -1,3 +1,4 @@
+import "help.on1x";
 import "poindexter.on1x";
 import "worksheet.on1x";
 import "ledger_pricing.on1x";
@@ -34,20 +35,4 @@ fn poindexter_command(command:string,count:i64,a:string,b:string,c:string,d:stri
       parse_int(CLI.basis_command_line_get_env("SHY_6")),rich);
   }
   return -1;
-}
-fn poindexter_help() {
-  println("review DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER [PAGE_HTML [CONTEXT_JSON]]");
-  println("reject DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER REASON [PAGE_HTML]");
-  println("revise DATABASE OBSERVATION_ID EXPECTED_REVIEW_ID accepted|rejected REVIEWER REASON [CONTEXT_JSON]");
-  println("ledger DATABASE COHORT");
-  println("sheet DATABASE COHORT");
-  println("tui DATABASE COHORT REVIEWER [EVENTS_JSON]");
-  println("gui DATABASE COHORT REVIEWER [EVENTS_JSON [FRAME_PPM]]");
-  println("history DATABASE OBSERVATION_ID");
-  println("replay DATABASE EXTRACTION_ID");
-  println("series DATABASE COHORT CURRENCY START STEP COUNT");
-  println("cohort DATABASE COHORT CURRENCY START STEP COUNT");
-  println("price-ledger DATABASE SELECTION_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
-  println("forecast-ledger DATABASE SELECTION_JSON FORECAST_POLICY_JSON");
-  dragnet_ledger_help();
 }

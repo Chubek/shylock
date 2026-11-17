@@ -28,9 +28,9 @@ def compose(build, core, plugins, initializers, events):
     for index, plugin in enumerate(plugins):
         entry += [f"  let status{index}={plugin}_command(command,count,a,b,c,d);",
                   f"  if status{index}>=0 {{ return status{index}; }}"]
-    entry += ["  return -1;", "}", "fn builtin_plugin_help() {"]
-    entry += [f"  {plugin}_help();" for plugin in plugins]
-    entry += ["}", ""]
+    entry += ["  return -1;", "}", "fn builtin_plugin_help(topic:string,color:bool)->bool {", "  var found=false;"]
+    entry += [f"  if {plugin}_help(topic,color) {{ found=true; }}" for plugin in plugins]
+    entry += ["  return found;", "}", ""]
 
     native = [f'#include {json.dumps(str((core.parent / "shylock.h").resolve()))}',
               f'#include {json.dumps(str((core.parent / "extensions.h").resolve()))}',

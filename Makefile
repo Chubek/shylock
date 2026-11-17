@@ -60,7 +60,8 @@ $(BUILD)/main.on1x $(BUILD)/builtin_plugins.c &: FORCE tools/plugin_config.py Ma
 	  $(foreach event,$(PLUGIN_EVENTS),--event $(event))
 
 PPX_LIB := $(wildcard $(ON1X)/stdlib/ppx/*.on1x) $(ON1X)/stdlib/sexpr/sexpr.on1x $(ON1X)/stdlib/visitor/visitor.on1x
-PPX_TIMEOUT_MS ?= 30000
+# The complete command catalog is part of the AST processed by the fields PPX.
+PPX_TIMEOUT_MS ?= 60000
 $(BUILD)/ppx-fields: src/ppx/fields.on1x $(PPX_LIB) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --cflag=-O2 $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
@@ -123,6 +124,7 @@ $(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_all
 
 test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/metaprogramming-tests $(BUILD)/document-allocation-tests
 	$(PYTHON) tests/plugins.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/help.py
 	$(PYTHON) tests/test.py "$(BUILD)/shylock" "$(MULIB)"
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/poindexter.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/pipeline.py

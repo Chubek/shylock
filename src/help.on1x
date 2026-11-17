@@ -1,0 +1,117 @@
+import std.os.CommandLine as HelpCLI;
+import std.text.Char as HelpChar;
+import std.text.String as HelpString;
+
+# The launcher supplies only the terminal fact; rendering and option policy are On1x.
+fn help_color(mode:string)->bool {
+  if mode=="always" { return true; }
+  if mode=="never" { return false; }
+  if HelpCLI.basis_command_line_get_env("NO_COLOR")!="" { return false; }
+  let force=HelpCLI.basis_command_line_get_env("FORCE_COLOR");
+  if force=="0" { return false; }
+  if force!="" { return true; }
+  return HelpCLI.basis_command_line_get_env("SHY_HELP_TTY")=="1" &&
+    HelpCLI.basis_command_line_get_env("TERM")!="dumb";
+}
+fn help_style(text:string,code:string,color:bool)->string {
+  if !color { return text; }
+  let esc=HelpChar.basis_char_chr(27);
+  return text_concat(text_concat(text_concat(esc,code),text),text_concat(esc,"[0m"));
+}
+fn help_heading(title:string,color:bool) {
+  println(""); println(help_style(title,"[1;36m",color));
+}
+fn help_entry(topic:string,color:bool,name:string,usage:string,summary:string,
+              arguments:string,notes:string,examples:string,manual:string)->bool {
+  if topic=="" {
+    var label=text_concat("  ",name);
+    while text_len(label)<25 { label=text_concat(label," "); }
+    println(text_concat(help_style(label,"[32m",color),summary));
+    return false;
+  }
+  if topic!=name { return false; }
+  println(help_style(text_concat("shylock ",name),"[1;35m",color));
+  println(summary);
+  help_heading("Usage",color);
+  println(text_concat("  ./shylock ",usage));
+  help_heading("Arguments",color); println(arguments);
+  help_heading("Notes",color); println(notes);
+  help_heading("Examples",color); println(help_style(examples,"[32m",color));
+  help_heading("Read more",color); println(text_concat("  ",manual));
+  println("  ./shylock help                 All available commands");
+  println("  Help accepts --color=auto|always|never; -h and --help are aliases.");
+  return true;
+}
+
+fn help_flag(value:string)->bool { return value=="--help" || value=="-h"; }
+fn help_argument(index:i64)->string {
+  # Eight arguments is the launcher's existing public limit.
+  if index==1 { return HelpCLI.basis_command_line_get_env("SHY_1"); }
+  if index==2 { return HelpCLI.basis_command_line_get_env("SHY_2"); }
+  if index==3 { return HelpCLI.basis_command_line_get_env("SHY_3"); }
+  if index==4 { return HelpCLI.basis_command_line_get_env("SHY_4"); }
+  if index==5 { return HelpCLI.basis_command_line_get_env("SHY_5"); }
+  if index==6 { return HelpCLI.basis_command_line_get_env("SHY_6"); }
+  if index==7 { return HelpCLI.basis_command_line_get_env("SHY_7"); }
+  return HelpCLI.basis_command_line_get_env("SHY_8");
+}
+fn help_overview(color:bool) {
+  println(help_style("SHYLOCK  |  Evidence-led price forecasting","[1;35m",color));
+  println("  Capture evidence, review observations, forecast and adjust prices.");
+  help_heading("Usage",color);
+  println("  ./shylock COMMAND [ARGUMENTS]");
+  println("  ./shylock help [COMMAND] [--color=auto|always|never]");
+  println("  ./shylock COMMAND --help       (or -h)");
+  core_help("",color);
+  builtin_plugin_help("",color);
+  help_heading("Conventions",color);
+  println("  UPPERCASE names are inputs; [brackets] mark optional positional inputs.");
+  println("  JSON/HTML/Lua arguments are file paths. Quote spaces; use '' to skip a slot.");
+  println("  Money uses integer minor units; timestamps use Unix seconds; indexes start at 0.");
+  println("  Examples use repository fixtures or named inputs you prepare first.");
+  println("  Commands normally emit data on stdout and diagnostics on stderr.");
+  println("  Exit 0: success; 2: invalid input/failure; some workflows use 3: conflict, 4: gaps.");
+  help_heading("Color",color);
+  println("  Auto: color on terminals, plain text in pipes or with TERM=dumb.");
+  println("  NO_COLOR disables auto color; FORCE_COLOR=1 enables it (0 disables it).");
+  println("  An explicit --color=always or --color=never overrides the environment.");
+  help_heading("Examples",color);
+  println(help_style("  ./shylock help estimate\n  ./shylock forecast --help\n  ./shylock help --color=always","[32m",color));
+  println("\n  See README.md and manual/ for file schemas and complete workflows.");
+}
+
+# Return -1 for ordinary execution. Help must never load plugins, invoke hooks,
+# open user input files, acquire pages, or run a formula as a side effect.
+fn help_dispatch(command:string,count:i64)->i64 {
+  var requested=command=="" || command=="help" || help_flag(command);
+  var i=1;
+  while i<=count { if help_flag(help_argument(i)) { requested=true; } i=i+1; }
+  if !requested { return -1; }
+  var topic="";
+  if command!="" && command!="help" && !help_flag(command) { topic=command; }
+  var mode="auto";
+  var color_seen=false;
+  i=1;
+  while i<=count {
+    let arg=help_argument(i);
+    if HelpString.basis_string_is_prefix("--color=",arg) {
+      let value=HelpString.basis_string_extract(arg,8);
+      if color_seen || (value!="auto" && value!="always" && value!="never") {
+        return shy_error("help expects one --color=auto|always|never option");
+      }
+      mode=value; color_seen=true;
+    } else {
+      if !help_flag(arg) {
+        if topic!="" || arg=="" || HelpString.basis_string_is_prefix("-",arg) {
+          return shy_error("usage: ./shylock help [COMMAND] [--color=auto|always|never]");
+        }
+        topic=arg;
+      }
+    }
+    i=i+1;
+  }
+  let color=help_color(mode);
+  if topic=="" { help_overview(color); return 0; }
+  if builtin_plugin_help(topic,color) || core_help(topic,color) { return 0; }
+  return shy_error("unknown help topic in this build; see ./shylock help");
+}

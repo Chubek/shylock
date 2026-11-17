@@ -6,6 +6,8 @@ import "forecast.on1x";
 import "quote.on1x";
 import "pricing.on1x";
 import "model.on1x";
+import "help.on1x";
+import "help_pages.on1x";
 import std.os.CommandLine as CLI;
 import std.parsec.parsec as Scan;
 
@@ -76,31 +78,13 @@ fn run_command() -> i64 {
       parse_int(CLI.basis_command_line_get_env("SHY_6")),
       parse_int(CLI.basis_command_line_get_env("SHY_7")));
   }
-  if command == "help" || command == "" {
-    builtin_plugin_help();
-    println("plugins");
-    println("extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS SITE_RULES MODEL_REPLY_JSON PLUGIN");
-    println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
-    println("extension-replay CONFIG_JSON EVENTS_JSON");
-    println("formula-test FORMULA CASES_JSON");
-    println("print-report TEMPLATE_JSON DATA_JSON");
-    println("forecast SERIES_JSON FORECAST_POLICY_JSON");
-    println("quote QUOTE_INPUT_JSON");
-    println("price COHORT_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
-    println("optimize-model MODEL_POLICY_JSON");
-    println("estimate SERIES_JSON HORIZON");
-    println("backtest SERIES_JSON HORIZON MIN_TRAINING_SAMPLES");
-    println("recommend SERIES_JSON HORIZON FORMULA WEEKEND PREMIUM_BP FLOOR CAP TICK");
-    println("optimize DEMAND_JSON FLOOR CAP TICK UNIT_COST");
-    println("demand BOOKING_OUTCOMES_JSON AS_OF CAPACITY MIN_SAMPLES");
-    println("adjust FORMULA REFERENCE_MINOR WEEKEND PREMIUM_BP FLOOR CAP TICK");
-    return 0;
-  }
   return shy_error("invalid command or argument count; see ./shylock help");
 }
 
 fn main()->i64 {
   let command=CLI.basis_command_line_get_env("SHY_COMMAND");
+  let help_status=help_dispatch(command,parse_int(CLI.basis_command_line_get_env("SHY_COUNT")));
+  if help_status>=0 { return help_status; }
   if command=="extension-replay" && CLI.basis_command_line_get_env("SHY_COUNT")=="2" {
     return extension_replay(CLI.basis_command_line_get_env("SHY_1"),CLI.basis_command_line_get_env("SHY_2"));
   }

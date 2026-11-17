@@ -1,0 +1,102 @@
+fn dragnet_help(topic:string,color:bool)->bool {
+  if topic=="" { help_heading("Dragnet: discovery and saved evidence",color); }
+  if help_entry(topic,color,"discover","discover PROVIDER QUERY [SERP_HTML [LIMIT]]",
+    "Discover listing URLs with an ElviScrape provider.",
+    "  PROVIDER   Trusted .elvs provider name, e.g. google or bing.\n  QUERY      Nonempty search text; quote it when it contains spaces.\n  SERP_HTML  Saved search response; omitted or '' requests live HTTPS.\n  LIMIT      1..64, default 10; clamped to the provider's limit.",
+    "  Emits a replayable discovery artifact; does not fetch discovered listings.\n  SHY_PROVIDER_ROOT can select a trusted provider directory. Saved-file examples\n  below run offline. Omitting SERP_HTML performs a live request.",
+    "  ./shylock discover google 'lake cottage' tests/fixtures/google.html 10\n  ./shylock discover bing 'lake cottage' tests/fixtures/bing.html 5 > bing.json\n  ./shylock discover google 'lake cottage' tests/fixtures/google.html > discovery.json",
+    "manual/dragnet.md") { return true; }
+  if help_entry(topic,color,"discover-many","discover-many DISCOVERY_JOB_JSON",
+    "Run an explicitly configured batch of discovery providers.",
+    "  DISCOVERY_JOB_JSON  shylock.discovery-job/v1 with query, limit,\n                      allow_network and 1..8 provider/capture entries.",
+    "  Capture paths are relative to the job. Live sources require allow_network.\n  Preserves per-provider results; partial failure exits 2 with an artifact.",
+    "  ./shylock discover-many plugins/dragnet/offline-job.json\n  ./shylock discover-many plugins/dragnet/offline-job.json > discoveries.json\n  ./shylock discover-many saved-search-job.json",
+    "manual/dragnet.md") { return true; }
+  if help_entry(topic,color,"discover-replay","discover-replay DISCOVERY_JSON",
+    "Verify a discovery by rerunning its retained provider and response.",
+    "  DISCOVERY_JSON  One saved shylock.discovery/v1 result, not a batch.",
+    "  Runs offline without the original provider file. Requires the recorded\n  MuLIB revision/parser profile to match. Recomputes URLs, hits and IDs.",
+    "  ./shylock discover-replay discovery.json\n  ./shylock discover-replay bing.json\n  ./shylock discover-replay discovery.json > replayed-discovery.json",
+    "manual/dragnet.md") { return true; }
+  if help_entry(topic,color,"capture","capture HTTPS_URL",
+    "Fetch a live public HTTPS page as raw HTML.",
+    "  HTTPS_URL  Public HTTPS listing URL using the supported transport policy.",
+    "  Performs network access. Verifies TLS/hostname and validates addresses;\n  redirects are rejected. Output is raw HTML. Use snapshot to retain metadata.\n  Replace the example URLs with the actual public page you intend to capture.",
+    "  ./shylock capture https://example.org/\n  ./shylock capture https://example.org/cottage > page.html\n  ./shylock capture https://example.org/apartment > apartment.html",
+    "manual/dragnet.md") { return true; }
+  if help_entry(topic,color,"snapshot","snapshot HTTPS_URL CAPTURE_UNIX_SECONDS [PAGE_HTML]",
+    "Wrap saved or live HTML in an immutable, digest-bound snapshot.",
+    "  HTTPS_URL             Listing URL retained as provenance.\n  CAPTURE_UNIX_SECONDS  Caller-asserted timestamp, 0..253402300799.\n  PAGE_HTML             Saved page; omitting it explicitly fetches live HTTPS.",
+    "  Emits shylock.snapshot/v1 with exact bytes, source, timestamp and digest.\n  A saved-file timestamp is your assertion, not authenticated capture time.",
+    "  ./shylock snapshot https://example.org/cottage 1760000000 tests/fixtures/rental.html > snapshot.json\n  ./shylock snapshot https://example.org/cottages 1760000000 tests/fixtures/naive-rentals.html > cottages.json\n  ./shylock snapshot https://example.org/cottage 1760000060 page.html > next-snapshot.json",
+    "manual/dragnet.md") { return true; }
+  # The generic registry owns the index entry; this plugin supplies default syntax.
+  if topic!="" && help_entry(topic,color,"extract","extract PAGE_HTML SOURCE_URL CAPTURE_UNIX_SECONDS [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]",
+    "Extract deterministic price candidates and optional saved model evidence.",
+    "  PAGE_HTML / SOURCE_URL  Saved bytes and their original source URL.\n  CAPTURE_UNIX_SECONDS    Asserted capture time.\n  SITE_RULES              Optional host-scoped rules JSON.\n  MODEL_REPLY_JSON        Optional digest-bound, exact-quote model reply.\n  PLUGIN                  Extractor name; defaults to dragnet.",
+    "  Runs offline. Candidates still require review; unknown currency and rate\n  basis stay unresolved. Use '' to skip earlier optional positions. Imported\n  model errors leave deterministic results available with a diagnostic.",
+    "  ./shylock extract tests/fixtures/rental.html https://example.org/cottage 1000 > extraction.json\n  ./shylock extract tests/fixtures/rental.html https://example.org/cottage 1000 tests/fixtures/rule.json\n  ./shylock extract page.html https://example.org/cottage 1760000000 '' reply.json dragnet",
+    "manual/dragnet.md; manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"extract-snapshot","extract-snapshot SNAPSHOT_JSON [SITE_RULES [MODEL_REPLY_JSON [PLUGIN]]]",
+    "Validate a saved snapshot and extract from its original bytes.",
+    "  SNAPSHOT_JSON     Saved immutable snapshot.\n  SITE_RULES        Optional site-rule file.\n  MODEL_REPLY_JSON  Optional saved model reply; '' skips this slot.\n  PLUGIN            Registered extractor, default dragnet.",
+    "  Verifies metadata, body and IDs before extraction. Runs offline and retains\n  the original URL/time. Keep the snapshot and original HTML for later review.",
+    "  ./shylock extract-snapshot snapshot.json > extraction.json\n  ./shylock extract-snapshot snapshot.json tests/fixtures/rule.json\n  ./shylock extract-snapshot snapshot.json '' '' dragnet",
+    "manual/dragnet.md") { return true; }
+  if help_entry(topic,color,"flatten","flatten SNAPSHOT_OR_IR_JSON",
+    "Build readable, source-linked text blocks from a captured page.",
+    "  SNAPSHOT_OR_IR_JSON  Snapshot, browser-run snapshot wrapper, or page IR.",
+    "  Runs locally. Retains original byte ranges/digests and the immutable\n  snapshot. Reading a browser-run snapshot does not replay its action trace.",
+    "  ./shylock flatten snapshot.json > page-ir.json\n  ./shylock flatten browser.json > browser-ir.json\n  ./shylock flatten page-ir.json",
+    "manual/intelligence.md") { return true; }
+  if help_entry(topic,color,"find","find SNAPSHOT_OR_IR_JSON TARGET",
+    "Find price tokens or literal text in captured page blocks.",
+    "  SNAPSHOT_OR_IR_JSON  Any source accepted by flatten.\n  TARGET               price/prices for money tokens; otherwise literal text.",
+    "  Always local. Text matching is ASCII case-insensitive, not semantic search.\n  Results need review. Use find-rule for scoped listing and locale rules.",
+    "  ./shylock find snapshot.json prices\n  ./shylock find page-ir.json parking\n  ./shylock find page-ir.json 'cleaning fee' > matches.json",
+    "manual/intelligence.md") { return true; }
+  if help_entry(topic,color,"find-rule","find-rule SOURCE_JSON RULE_JSON TARGET [MODE [PROFILE --live]]",
+    "Extract scoped listing evidence using versioned NaiveFinder rules.",
+    "  SOURCE_JSON  Snapshot, browser snapshot wrapper, or page IR.\n  RULE_JSON    Host/container-scoped rule file.\n  TARGET       Target label, e.g. rental_price.\n  MODE         deterministic (default), hybrid, or model.\n  PROFILE      Model profile; hybrid/model calls require PROFILE and --live.",
+    "  Deterministic mode is offline. Live hybrid/model mode can transmit content\n  and incur charges. Exact quotes/provenance are retained; all candidates need\n  review. Preserve partial-extraction diagnostics independently of matches.",
+    "  ./shylock find-rule snapshot.json plugins/dragnet/rules/rental.json rental_price\n  ./shylock find-rule snapshot.json rules.json rental_price deterministic > found.json\n  ./shylock find-rule snapshot.json rules.json rental_price hybrid profile.json --live",
+    "manual/dragnet-naive.md") { return true; }
+  if help_entry(topic,color,"find-rule-replay","find-rule-replay ARTIFACT_JSON",
+    "Recompute and verify a saved NaiveFinder artifact offline.",
+    "  ARTIFACT_JSON  Saved shylock.naive-find/v1 artifact from find-rule.",
+    "  Re-enters the full extraction pipeline with retained evidence and rules.\n  Does not request fresh model output or acquire pages.",
+    "  ./shylock find-rule-replay found.json\n  ./shylock find-rule-replay cottage-found.json\n  ./shylock find-rule-replay found.json > verified-find.json",
+    "manual/dragnet-naive.md") { return true; }
+  if help_entry(topic,color,"collect","collect COLLECTION_JOB_JSON",
+    "Join selected discovery hits to saved snapshots and listing rules.",
+    "  COLLECTION_JOB_JSON  shylock.collection-job/v1 with target and 1..8\n                       sources: discovery, zero-based hit, snapshot, rule.",
+    "  Resolves paths relative to the job and verifies source URLs by exact match.\n  Runs offline with no implicit acquisition/model calls. Duplicate evidence\n  remains explicit; extraction is not review acceptance.",
+    "  ./shylock collect collection-job.json > collection.json\n  ./shylock collect cottages-job.json\n  ./shylock collect apartments-job.json > apartments-collection.json",
+    "manual/dragnet-pricing.md; examples/offline-dragnet.py") { return true; }
+  if help_entry(topic,color,"collect-replay","collect-replay COLLECTION_JSON",
+    "Verify all embedded discovery, extraction and collection links.",
+    "  COLLECTION_JSON  Saved shylock.collection/v1 artifact.",
+    "  Offline replay needs no original input files. Recomputes evidence,\n  duplicates, statuses, links and summary rather than trusting submitted IDs.",
+    "  ./shylock collect-replay collection.json\n  ./shylock collect-replay apartments-collection.json\n  ./shylock collect-replay collection.json > verified-collection.json",
+    "manual/dragnet-pricing.md") { return true; }
+  if topic=="" { help_heading("Dragnet: browser and explicit model tools",color); }
+  if help_entry(topic,color,"browse","browse BROWSER_JOB_JSON",
+    "Run a bounded static-HTML navigation and inspection job.",
+    "  BROWSER_JOB_JSON  shylock.browser-job/v1 with start URL, capture time,\n                    saved pages, allow_network and action steps.",
+    "  Supports navigate, follow, read and assert; no JavaScript execution.\n  Unmapped pages require explicit allow_network. Saved-page jobs stay offline.",
+    "  ./shylock browse plugins/dragnet/browser-job.json\n  ./shylock browse plugins/dragnet/browser-job.json > browser.json\n  ./shylock browse saved-navigation-job.json > navigation.json",
+    "manual/intelligence.md") { return true; }
+  if help_entry(topic,color,"openai-account","openai-account OPENAI_PROFILE_JSON",
+    "Validate model-service configuration and credential availability locally.",
+    "  OPENAI_PROFILE_JSON  Explicit model and credential environment\n                       variable settings; see plugins/dragnet/openai-profile.json.",
+    "  Reports configuration readiness without a network request or secret output.\n  OPENAI_BASE_URL selects the endpoint. This does not verify server availability.",
+    "  ./shylock openai-account plugins/dragnet/openai-profile.json\n  ./shylock openai-account profile.json\n  ./shylock openai-account profile.json > account-status.json",
+    "manual/intelligence.md") { return true; }
+  if help_entry(topic,color,"model-extract","model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live",
+    "Request model suggestions with explicit live-call consent.",
+    "  SNAPSHOT_OR_IR_JSON   Saved source accepted by flatten.\n  OPENAI_PROFILE_JSON   Model-service profile; credentials come from the env.\n  TARGET                Extraction target text.\n  --live                Required explicit authorization for this model call.",
+    "  Sends content to the configured service and may incur charges. Suggestions\n  must match captured bytes and remain review-only. Model failure preserves\n  deterministic results with an explicit diagnostic.",
+    "  ./shylock model-extract snapshot.json profile.json prices --live\n  ./shylock model-extract page-ir.json profile.json parking --live\n  ./shylock model-extract page-ir.json profile.json 'nightly rates' --live > model-evidence.json",
+    "manual/intelligence.md") { return true; }
+  return topic=="";
+}

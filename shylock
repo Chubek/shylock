@@ -2,6 +2,9 @@
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 export SHY_ROOT="$root"
+SHY_HELP_TTY=0
+if [ -t 1 ]; then SHY_HELP_TTY=1; fi
+export SHY_HELP_TTY
 export SHY_COMMAND="${1:-help}"
 if [ "$#" -gt 0 ]; then shift; fi
 if [ "$#" -gt 8 ]; then echo "Too many arguments" >&2; exit 2; fi

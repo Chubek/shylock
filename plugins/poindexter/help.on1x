@@ -1,0 +1,83 @@
+fn poindexter_help(topic:string,color:bool)->bool {
+  if topic=="" { help_heading("Poindexter: review and evidence ledger",color); }
+  if help_entry(topic,color,"review","review DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER [PAGE_HTML [CONTEXT_JSON]]",
+    "Replay evidence and explicitly accept a comparable observation.",
+    "  DATABASE         Ledger path, created if needed.\n  EXTRACTION_JSON  Saved extraction or NaiveFinder artifact.\n  INDEX            Zero-based candidate index.\n  COHORT           Named comparison group.\n  REVIEWER         Nonempty reviewer identity.\n  PAGE_HTML        Original HTML for verified legacy extraction replay.\n  CONTEXT_JSON     Listing/stay/guests/tax/fee context; '' skips PAGE_HTML.",
+    "  Writes an explicit review only after admission checks. Unknown context\n  requires resolution; source meaning/amount cannot be overwritten. Exact\n  retries are idempotent. Legacy imports without bytes remain unverified.",
+    "  ./shylock review prices.db extraction.json 1 cottages-eur alice tests/fixtures/rental.html tests/fixtures/context.json\n  ./shylock review prices.db found.json 0 market alice '' stay-context.json\n  ./shylock review prices.db second.json 1 cottages-eur bob page.html context.json",
+    "manual/poindexter.md; manual/dragnet-naive.md") { return true; }
+  if help_entry(topic,color,"reject","reject DATABASE EXTRACTION_JSON INDEX COHORT REVIEWER REASON [PAGE_HTML]",
+    "Record an explicit rejection without admitting a price to a cohort.",
+    "  DATABASE / EXTRACTION_JSON  Ledger and saved extraction.\n  INDEX / COHORT              Zero-based candidate and comparison group.\n  REVIEWER / REASON           Reviewer identity and nonempty explanation.\n  PAGE_HTML                   Optional original bytes for verified replay.",
+    "  Rejected evidence stays inspectable. Quote reasons with spaces. Use revise\n  for later review decisions instead of replacing a published observation.",
+    "  ./shylock reject prices.db extraction.json 0 market alice 'Currency unresolved' page.html\n  ./shylock reject prices.db extraction.json 2 market bob 'Not a nightly rate' page.html\n  ./shylock reject prices.db found.json 0 market alice 'Conflicting amounts'",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"revise","revise DATABASE OBSERVATION_ID EXPECTED_REVIEW_ID accepted|rejected REVIEWER REASON [CONTEXT_JSON]",
+    "Append a review revision while checking the current review head.",
+    "  DATABASE          Ledger file.\n  OBSERVATION_ID    Stable observation ID from ledger/history output.\n  EXPECTED_REVIEW_ID Current review head ID; detects concurrent edits.\n  accepted|rejected New decision.\n  REVIEWER / REASON Reviewer identity and explicit explanation.\n  CONTEXT_JSON      Optional resolved context, subject to admission checks.",
+    "  Preserves history and immutable quoted amounts. Replace shell variables\n  below with IDs returned by ledger/history. A stale review head is a conflict.",
+    "  ./shylock revise prices.db \"$OBSERVATION_ID\" \"$REVIEW_ID\" rejected alice 'Wrong stay dates'\n  ./shylock revise prices.db \"$OBSERVATION_ID\" \"$REVIEW_ID\" accepted alice 'Context verified' context.json\n  ./shylock revise prices.db \"$OBSERVATION_ID\" \"$REVIEW_ID\" accepted bob 'Conflict reviewed' resolved-context.json",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"ledger","ledger DATABASE COHORT",
+    "Inspect observations and current review heads in a cohort.",
+    "  DATABASE  Existing ledger file.\n  COHORT    Named comparison group used during review.",
+    "  Emits JSON including stable IDs needed by history and revise. Reading\n  the ledger does not accept unresolved candidates or create a price decision.",
+    "  ./shylock ledger prices.db cottages-eur\n  ./shylock ledger prices.db market > ledger.json\n  ./shylock ledger apartments.db apartments-eur",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"history","history DATABASE OBSERVATION_ID",
+    "Inspect the append-only review history of an observation.",
+    "  DATABASE        Ledger file.\n  OBSERVATION_ID  Stable ID from ledger output.",
+    "  Shows review revisions without altering their decisions. Set the shell\n  variables below to real observation IDs returned by the ledger.",
+    "  ./shylock history prices.db \"$OBSERVATION_ID\"\n  ./shylock history prices.db \"$OBSERVATION_ID\" > history.json\n  ./shylock history prices.db \"$OTHER_OBSERVATION_ID\"",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"replay","replay DATABASE EXTRACTION_ID",
+    "Verify a retained extraction using the ledger's saved evidence.",
+    "  DATABASE       Ledger containing a verified extraction.\n  EXTRACTION_ID  Extraction ID from ledger output, not an observation ID.",
+    "  Recomputes extraction from retained bytes and provenance. Runs offline.\n  Replace shell variables with IDs from the ledger; unverified legacy imports\n  cannot become verified merely by requesting replay.",
+    "  ./shylock replay prices.db \"$EXTRACTION_ID\"\n  ./shylock replay prices.db \"$EXTRACTION_ID\" > replay.json\n  ./shylock replay prices.db \"$OTHER_EXTRACTION_ID\"",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"series","series DATABASE COHORT CURRENCY START STEP COUNT",
+    "Export equally spaced reviewed prices in the legacy series format.",
+    "  DATABASE / COHORT  Ledger and comparison group.\n  CURRENCY           Explicit supported ISO currency code.\n  START              First bucket's Unix-seconds start.\n  STEP               Positive bucket width in seconds.\n  COUNT              Number of buckets, 2..4096.",
+    "  Selects comparable current accepted reviews. No interpolation or implicit\n  currency conversion. Conflicts exit 3; missing buckets exit 4. Use cohort\n  when you need full evidence lineage in the export.",
+    "  ./shylock series prices.db cottages-eur EUR 1000 60 2\n  ./shylock series prices.db cottages-eur EUR 1000 60 2 > series.json\n  ./shylock series prices.db market EUR 1793400000 60 7 > market-series.json",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"cohort","cohort DATABASE COHORT CURRENCY START STEP COUNT",
+    "Export a comparable reviewed cohort with observation lineage.",
+    "  DATABASE / COHORT  Ledger and comparison group.\n  CURRENCY           Explicit supported ISO currency.\n  START / STEP       First bucket's Unix time and positive width in seconds.\n  COUNT              Number of buckets, 2..4096.",
+    "  Retains review/evidence references for downstream forecasting and pricing.\n  Requires comparable context, complete buckets and no unresolved conflicts.\n  Conflicts exit 3; gaps exit 4.",
+    "  ./shylock cohort prices.db cottages-eur EUR 1000 60 2\n  ./shylock cohort prices.db cottages-eur EUR 1000 60 2 > cohort.json\n  ./shylock cohort prices.db market EUR 1793400000 60 7 > market-cohort.json",
+    "manual/poindexter.md") { return true; }
+  if help_entry(topic,color,"forecast-ledger","forecast-ledger DATABASE SELECTION_JSON FORECAST_POLICY_JSON",
+    "Forecast directly from selected current reviews in the ledger.",
+    "  DATABASE              Reviewed observation ledger.\n  SELECTION_JSON        shylock.ledger-selection/v1 cohort, currency, buckets,\n                        as_of, max_age_seconds and minimum_listings.\n  FORECAST_POLICY_JSON  Forecast models and evaluation settings.",
+    "  Applies complete-bucket, freshness and distinct-listing coverage gates.\n  Builds an owned cohort under the writer lock and forecasts after unlock.\n  Conflicts exit 3; gaps exit 4; gate/admission failures exit 2.",
+    "  ./shylock forecast-ledger prices.db selection.json policies/forecast.json\n  ./shylock forecast-ledger prices.db selection.json policies/forecast.json > forecast.json\n  ./shylock forecast-ledger prices.db seasonal-selection.json policies/seasonal.json",
+    "manual/dragnet-pricing.md") { return true; }
+  if help_entry(topic,color,"price-ledger","price-ledger DATABASE SELECTION_JSON PRICING_POLICY_JSON [DEMAND_JSON]",
+    "Build an audited pricing decision directly from reviewed ledger evidence.",
+    "  DATABASE             Reviewed observation ledger.\n  SELECTION_JSON       Cohort/bucket, freshness and coverage selection.\n  PRICING_POLICY_JSON  Forecast, formula, constraints and charges.\n  DEMAND_JSON          Optional compatible demand artifact.",
+    "  Selection and policy must agree on as_of. Only complete intervals and\n  comparable accepted reviews pass. Asking prices do not supply booking demand.\n  Output retains cohort and collection lineage.",
+    "  ./shylock price-ledger prices.db selection.json pricing-policy.json\n  ./shylock price-ledger prices.db selection.json pricing-policy.json > decision.json\n  ./shylock price-ledger prices.db selection.json demand-policy.json demand.json",
+    "manual/dragnet-pricing.md") { return true; }
+  if topic=="" { help_heading("Poindexter: worksheets",color); }
+  if help_entry(topic,color,"sheet","sheet DATABASE COHORT",
+    "Dump the shared review worksheet as JSON.",
+    "  DATABASE  Ledger file.\n  COHORT    Named comparison group.",
+    "  Provides a noninteractive view of the same model used by tui and gui,\n  including unresolved fields, review state and retained source lineage.",
+    "  ./shylock sheet prices.db cottages-eur\n  ./shylock sheet prices.db market > worksheet.json\n  ./shylock sheet apartments.db apartments-eur",
+    "manual/worksheet.md") { return true; }
+  if help_entry(topic,color,"tui","tui DATABASE COHORT REVIEWER [EVENTS_JSON]",
+    "Open the terminal worksheet to inspect and complete reviews.",
+    "  DATABASE / COHORT  Ledger and comparison group.\n  REVIEWER           Identity attached to explicit review saves.\n  EVENTS_JSON        Optional shylock.ui-events/v1 script for headless use.",
+    "  Interactive use requires a terminal. Scripted use needs no terminal and\n  validates the complete script before actions. Save requires an explicit\n  reason; source amounts and known meaning remain read-only. See the manual\n  for navigation keys and the supported editable context fields.",
+    "  ./shylock tui prices.db cottages-eur alice\n  ./shylock tui prices.db market bob review-events.json\n  ./shylock tui prices.db market alice inspect-events.json > worksheet-result.json",
+    "manual/worksheet.md") { return true; }
+  if help_entry(topic,color,"gui","gui DATABASE COHORT REVIEWER [EVENTS_JSON [FRAME_PPM]]",
+    "Open the graphical review worksheet or render a scripted session.",
+    "  DATABASE / COHORT  Ledger and comparison group.\n  REVIEWER           Identity attached to review saves.\n  EVENTS_JSON        Optional validated worksheet event script.\n  FRAME_PPM          Optional output image path for a scripted session.",
+    "  Interactive use needs a build with SDL2 and an available display. Scripted\n  rendering is headless. Edits use the same validation and review revision\n  rules as tui; unsaved changes are never committed just because input ends.",
+    "  ./shylock gui prices.db cottages-eur alice\n  ./shylock gui prices.db market alice events.json\n  ./shylock gui prices.db market alice events.json frame.ppm",
+    "manual/worksheet.md") { return true; }
+  return dragnet_ledger_help(topic,color);
+}

@@ -45,6 +45,42 @@ The build also produces the companion `shylock-worker` executable. Keep it besid
 `shylock` when installing/copying binaries if process isolation will be used.
 The normal CLI does not require a worker at runtime when isolation is off.
 
+### Command help
+
+The driver has a grouped command index and a dedicated page for every enabled
+command, with argument descriptions, operational notes and three examples:
+
+```sh
+./shylock help
+./shylock help recommend
+./shylock find-rule --help
+./shylock review -h
+./shylock help --color=always
+```
+
+No arguments, `-h` and `--help` show the index. `help COMMAND`, `COMMAND --help`,
+`COMMAND -h`, and `--help COMMAND` show the same command page. Help is handled
+before native plugins or extension hooks initialize; it does not read input
+files, modify a ledger or perform network/model calls. Unknown topics and
+malformed help options exit 2. Only compiled-in command pages are available.
+
+Color defaults to `--color=auto`: terminals receive colored titles, headings and
+examples, while redirected output stays plain. `TERM=dumb` disables automatic
+terminal color. A nonempty `NO_COLOR` disables auto color; otherwise a nonempty
+`FORCE_COLOR` enables it (`0` disables it). Explicit `--color=always` or
+`--color=never` overrides the environment. These options apply to help only.
+The shell launcher reports whether stdout is a terminal; On1x's CommandLine,
+String and Char standard-library tools handle help routing and rendering.
+
+Examples using fixture paths run from the repository root. Other named JSON
+files and artifact IDs must be prepared through the documented workflows.
+Live acquisition/model examples are identified on their command pages.
+
+Built-in plugin authors: the help hook now has signature
+`NAME_help(topic:string,color:bool)->bool`, replacing `NAME_help()`.
+See [the help composition contract](manual/plugins.md) for the shared renderer
+and return-value rules. Native extractor ABI and command data formats are unchanged.
+
 ### Plugin boundary and build profiles
 
 `src/` contains only the engine and generic host interfaces. All Dragnet policy,
