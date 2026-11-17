@@ -229,6 +229,15 @@ failed, and reject truncated/invalid editor input. Keep tests/worksheet.py and
 tests/poindexter_finish.py passing, including native sheet allocation/cleanup
 coverage. Read manual/worksheet.md before extending it.
 
+Core cohort fold cutoffs use complete-training-buckets/v1: the inclusive end of
+the last training bucket, never its start. File price and price-ledger both
+require completed intervals at as_of. Keep failed engine construction/output
+from exposing a cached numeric reference, and preserve sticky document errors
+before demand/policy replacement. Model-error artifacts remain inspectable but
+are not valid numeric recommendations. Tests cover offset captures, exact cutoff
+boundaries, session poisoning, stale optimization retries and every allocation
+in the forecast construction path. See manual/pricing.md.
+
 ## The Use of On1x Metaprogramming Features
 
 The agent is encouraged to use On1x's metaprogramming features. Hygenic macros

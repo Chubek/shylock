@@ -55,19 +55,27 @@ fn pricing_policy_valid(count:i64,demand:string)->bool {
   return valid;
 }
 
-fn pricing_cohort_valid()->bool {
-  if shy_engine_number("verified")!=1 || shy_engine_field("currency")!=shy_document_text("",-1,"currency") ||
-     shy_engine_number("scale")!=shy_document_number("",-1,"scale") ||
-     shy_engine_number("latest_capture")>shy_document_number("",-1,"as_of") { return false; }
+fn pricing_cohort_issue()->string {
+  if shy_engine_number("verified")!=1 { return "pricing requires a reviewed, provenance-bearing cohort"; }
+  if shy_engine_field("currency")!=shy_document_text("",-1,"currency") ||
+     shy_engine_number("scale")!=shy_document_number("",-1,"scale") { return "pricing currency/scale differs from the cohort"; }
+  let as_of=shy_document_number("",-1,"as_of");
+  let start=shy_engine_number("start"); let step=shy_engine_number("step");
+  let count=shy_engine_number("samples");
+  # A file export must obey the same complete-interval policy as price-ledger.
+  # Captures before as_of do not establish that their sampling bucket has ended.
+  if start<0 || step<1 || count<2 || start+step*count-1>as_of { return "pricing history contains an incomplete or future sampling interval"; }
+  if shy_engine_number("latest_capture")>as_of { return "pricing history contains a future capture"; }
   let nights=pricing_day(shy_engine_field("stay_end"))-pricing_day(shy_engine_field("stay_start"));
-  if nights!=shy_document_number("charges",-1,"nights") { return false; }
+  if nights!=shy_document_number("charges",-1,"nights") { return "quote nights differ from the reviewed stay"; }
   let mode=shy_document_text("charges",-1,"tax_mode");
   let taxes=shy_engine_field("taxes");
-  if (mode=="inclusive" && taxes!="included") || (mode=="exclusive" && taxes!="excluded") { return false; }
+  if (mode=="inclusive" && taxes!="included") || (mode=="exclusive" && taxes!="excluded") { return "quote tax mode differs from reviewed tax scope"; }
   if shy_engine_field("fees")=="included" &&
-    shy_document_number("charges",-1,"cleaning_minor")+shy_document_number("charges",-1,"other_fees_minor")>0 { return false; }
-  let today=pricing_day(text_slice(Date.basis_date_utc_iso(shy_document_number("",-1,"as_of")),0,10));
-  return today<=pricing_day(shy_engine_field("stay_start"));
+    shy_document_number("charges",-1,"cleaning_minor")+shy_document_number("charges",-1,"other_fees_minor")>0 { return "quote would add fees already included in reviewed rates"; }
+  let today=pricing_day(text_slice(Date.basis_date_utc_iso(as_of),0,10));
+  if today>pricing_day(shy_engine_field("stay_start")) { return "reviewed stay begins before the pricing date"; }
+  return "";
 }
 
 fn pricing_demand_valid(as_of:i64)->bool {
@@ -102,9 +110,9 @@ fn pricing_formula_audit(reference:i64,weekend:i64,premium:i64,low:i64,high:i64,
 }
 
 fn price_run(policy_path:string,count:i64,demand_path:string)->i64 {
-  if !pricing_policy_valid(count,demand_path) || !pricing_cohort_valid() {
-    return shy_error("invalid pricing policy or incompatible/unverified/future cohort and stay context");
-  }
+  if !pricing_policy_valid(count,demand_path) { return shy_error("invalid pricing policy"); }
+  let issue=pricing_cohort_issue();
+  if issue!="" { return shy_error(issue); }
   let policy=text_concat("",shy_document_json());
   if policy=="" || shy_engine_pricing_policy(policy)!=1 { return shy_error("cannot snapshot pricing policy"); }
   let currency=text_concat("",shy_document_text("",-1,"currency"));
@@ -125,6 +133,9 @@ fn price_run(policy_path:string,count:i64,demand_path:string)->i64 {
   let reference=shy_engine_reference();
   let proposed=shy_formula(formula,reference,weekend,premium);
   let audit=pricing_formula_audit(reference,weekend,premium,low,high,tick,proposed);
+  # Demand open/quote-policy restoration replace the document and reset its
+  # sticky status. Never erase an earlier audit allocation failure that way.
+  if shy_document_ok()!=1 { return shy_error("cannot retain complete formula audit"); }
   if proposed<0 { return shy_engine_decision("formula_error",-1,-1,-1,audit,""); }
   let adjusted=adjustment_grid(proposed,low,high,tick);
   var final=adjusted;

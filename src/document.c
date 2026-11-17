@@ -45,6 +45,7 @@ int64_t shy_document_parse(const char *text)
 }
 
 const mulib_json_t *shy_document_borrow(void) { return artifact; }
+int64_t shy_document_ok(void) { return !failed; }
 
 static const mulib_json_t *lookup(const char *section, int64_t index, const char *key)
 {

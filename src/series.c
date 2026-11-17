@@ -73,7 +73,7 @@ static int bucket_valid(const mulib_json_t *bucket, const mulib_json_t *sample,
 int shy_series_load(const char *path, double values[4096], size_t *count,
     char digest[65], mulib_json_t **lineage)
 {
-    *lineage = NULL;
+    *lineage = NULL; *count=0;
     size_t length;
     char *data = shy_read(path, SHY_DATA_LIMIT, &length);
     if (!data) return 0;
@@ -83,7 +83,7 @@ int shy_series_load(const char *path, double values[4096], size_t *count,
 int shy_series_parse(const char *data,size_t length,double values[4096],size_t *count,
     char digest[65],mulib_json_t **lineage)
 {
-    *lineage=NULL;
+    *lineage=NULL; *count=0;
     if (length>SHY_DATA_LIMIT) return 0;
     shy_digest(data, length, digest);
     mulib_json_t *input = mulib_json_parse(data, length, NULL);
@@ -134,6 +134,7 @@ int shy_series_parse(const char *data,size_t length,double values[4096],size_t *
     return 1;
 fail:
     mulib_json_destroy(input);
+    *count=0;
     return 0;
 }
 
@@ -166,7 +167,7 @@ int64_t shy_backtest(const char *path, int64_t horizon, int64_t training)
         if (lineage) {
             int64_t start = shy_integer(lineage, "start", INT64_C(253402300799));
             int64_t step = shy_integer(lineage, "step", INT64_C(253402300800));
-            if (!shy_add(fold, "cutoff", mulib_json_number((double)(start + (int64_t)(n-1)*step))) ||
+            if (!shy_add(fold, "cutoff", mulib_json_number((double)(start + (int64_t)n*step-1))) ||
                 !shy_add(fold, "target_at", mulib_json_number((double)(start + (int64_t)target*step)))) {
                 mulib_json_destroy(fold); goto fail;
             }
@@ -180,6 +181,7 @@ int64_t shy_backtest(const char *path, int64_t horizon, int64_t training)
     }
     if (!shy_add(out, "schema", mulib_json_string("shylock.backtest/v1")) ||
         !shy_add(out, "kind", mulib_json_string("chronological_backtest")) ||
+        !shy_add(out, "cutoff_policy", mulib_json_string("complete-training-buckets/v1")) ||
         !shy_add(out, "estimator", shy_estimator()) ||
         !shy_add(out, "series_blake3", mulib_json_string(digest)) ||
         !shy_add(out, "horizon", mulib_json_number((double)horizon)) ||

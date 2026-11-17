@@ -37,7 +37,14 @@ int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,
     (void)json; (void)digest; (void)floor; (void)cap; (void)tick; (void)cost;
     return 2;
 }
-int64_t shy_emit(mulib_json_t *record) { mulib_json_destroy(record); return 2; }
+static size_t publications;
+static int inspect_decision, stale_optimization;
+int64_t shy_emit(mulib_json_t *record)
+{
+    ++publications;
+    if (inspect_decision) stale_optimization=mulib_json_typeof(mulib_json_get(record,"optimization"))!=MULIB_JSON_NULL;
+    mulib_json_destroy(record); return 2;
+}
 int shy_extensions_enqueue(const char *event, const mulib_json_t *payload)
 { (void)event; (void)payload; return 1; }
 int shy_extensions_event(const char *event,const mulib_json_t *payload)
@@ -187,18 +194,44 @@ int64_t shy_document_allocation_test(void)
         shy_engine_close(); shy_engine_close();
     }
     mulib_json_destroy(in_memory);
-    for (size_t at = 1; ok && at <= 768; ++at) {
-        calls = 0; injected = 0; fault = at;
+    size_t engine_allocations=0;
+    for (size_t at = 0; ok && (at==0 || at<=engine_allocations); ++at) {
+        calls = 0; injected = 0; fault = at ? at : SIZE_MAX;
         int success = shy_engine_open("tests/fixtures/series.json") == 5 && shy_engine_policy(policy) == 1 &&
             shy_engine_candidate(candidate) == 0 && shy_engine_fold(0, 3, 1, 0) == 1 &&
             shy_engine_complete(0) == 1 && shy_engine_fold(0, 4, 1, 1) == 1 &&
             shy_engine_finish(0, 1, 1, 9000) == 0;
         fault = 0;
+        if (!at) engine_allocations=calls;
         reached += injected;
         if ((injected && success) || (!injected && !success)) ok = 0;
-        if (success && (shy_engine_reference() != 20000 || shy_engine_emit() != 2)) ok = 0;
+        if (!success && shy_engine_reference()!=-1) ok=0;
+        if (success && (shy_engine_reference() != 20000 || shy_engine_emit() != 2 || shy_engine_reference()!=-1)) ok = 0;
         shy_engine_close(); shy_engine_close();
     }
+    /* A failed optional quote operation can leave valid-looking empty metadata.
+       The decision sink must honor sticky document failure, not publish it. */
+    if (ok && shy_document_parse("{}") && shy_engine_open("tests/fixtures/series.json")==5 &&
+        shy_engine_policy(policy)==1 && shy_engine_candidate(candidate)==0 && shy_engine_fold(0,3,1,0)==1 &&
+        shy_engine_fold(0,4,1,1)==1 && shy_engine_finish(0,1,1,9000)==0 && shy_engine_pricing_policy("{}")) {
+        calls=0; fault=1; (void)shy_json_quote("formula audit"); fault=0;
+        size_t before=publications;
+        if (shy_document_ok() || shy_engine_decision("priced",20000,20000,20000,"{}","{}")!=2 || publications!=before) ok=0;
+    } else ok=0;
+    shy_document_close(); shy_engine_close();
+    if (ok && shy_engine_open("tests/fixtures/series.json")==5 && shy_engine_policy(policy)==1 &&
+        shy_engine_candidate(candidate)==0 && shy_engine_fold(0,3,1,0)==1 && shy_engine_fold(0,4,1,1)==1 &&
+        shy_engine_finish(0,1,1,9000)==0 && shy_engine_pricing_policy("{}")) {
+        const char text[]="{\"scenarios\":[{\"rate_minor\":20000,\"expected_units\":1}]}";
+        mulib_json_t *demand=mulib_json_parse(text,sizeof text-1,NULL);
+        ok=demand && shy_engine_demand(demand) && shy_engine_optimize(10000,30000,100,0,"profit")==20000 &&
+            shy_engine_optimize(25000,30000,100,0,"profit")==-1;
+        inspect_decision=1; size_t before=publications;
+        ok=ok && shy_engine_decision("demand_error",20000,20000,-1,"{}","")==2 && publications==before+1 &&
+            !stale_optimization && shy_engine_reference()==-1;
+        inspect_decision=0; mulib_json_destroy(demand);
+    } else ok=0;
+    shy_engine_close();
     mulib_elvi_scrape_program_t program;
     if (!mulib_elvi_scrape_load("third_party/mulib/library/elvi-scrape/google.elvs",&program,NULL)) ok=0;
     for (size_t at=0;ok && at<=2;++at) {

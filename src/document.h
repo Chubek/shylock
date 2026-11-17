@@ -14,6 +14,9 @@ int64_t shy_document_parse(const char *text);
 /* C-only borrowed immutable artifact; valid until the session is closed/replaced. */
 const mulib_json_t *shy_document_borrow(void);
 int64_t shy_document_close(void);
+/* Sticky serialization status, reset only by close/open/parse. Check before
+   replacing a document whose borrowed data contributed to a decision. */
+int64_t shy_document_ok(void);
 int64_t shy_document_has(const char *section, int64_t index, const char *key, const char *kind);
 int64_t shy_document_size(const char *section, int64_t index, const char *key);
 const char *shy_document_text(const char *section, int64_t index, const char *key);

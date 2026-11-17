@@ -29,6 +29,18 @@ static struct {
     candidate candidates[MAX_MODELS];
 } engine;
 
+static void invalidate_forecast(void)
+{
+    mulib_json_destroy(engine.forecast); engine.forecast=NULL;
+    mulib_json_destroy(engine.optimization); engine.optimization=NULL;
+    engine.point=-1; engine.variance=NAN;
+}
+static int64_t engine_failure(void)
+{
+    engine.failed=1; invalidate_forecast();
+    return 2;
+}
+
 int64_t shy_engine_close(void)
 {
     for (size_t i = 0; i < engine.models; ++i) {
@@ -46,7 +58,9 @@ int64_t shy_engine_close(void)
 int64_t shy_engine_open(const char *path)
 {
     shy_engine_close(); engine.point = -1;
-    if (!shy_series_load(path, engine.values, &engine.count, engine.digest, &engine.lineage)) return -1;
+    if (!shy_series_load(path, engine.values, &engine.count, engine.digest, &engine.lineage)) {
+        engine_failure(); return -1;
+    }
     return (int64_t)engine.count;
 }
 int64_t shy_engine_open_record(const mulib_json_t *record)
@@ -54,13 +68,17 @@ int64_t shy_engine_open_record(const mulib_json_t *record)
     char *s=record ? mulib_json_stringify(record,0) : NULL;
     shy_engine_close();
     int ok=s && shy_series_parse(s,strlen(s),engine.values,&engine.count,engine.digest,&engine.lineage);
-    free(s); return ok ? (int64_t)engine.count : -1;
+    free(s);
+    if (!ok) { engine_failure(); return -1; }
+    return (int64_t)engine.count;
 }
 int64_t shy_engine_selection(const char *audit)
 {
+    invalidate_forecast();
     mulib_json_destroy(engine.selection);
     engine.selection=strlen(audit)<=65536 ? mulib_json_parse(audit,strlen(audit),NULL) : NULL;
-    return engine.selection!=NULL;
+    if (!engine.selection) engine_failure();
+    return !engine.failed;
 }
 int64_t shy_engine_bucket_number(int64_t bucket,int64_t evidence,const char *key)
 {
@@ -79,15 +97,19 @@ static mulib_json_t *parse_text(const char *text)
 
 int64_t shy_engine_policy(const char *text)
 {
+    invalidate_forecast();
+    if (engine.failed || !engine.count || engine.models) { engine_failure(); return 0; }
     mulib_json_destroy(engine.policy); engine.policy = parse_text(text);
     int64_t window = shy_integer(engine.policy, "window", 1024);
     engine.window = window >= 2 ? (size_t)window : 0;
-    return engine.policy && engine.window ? 1 : 0;
+    if (!engine.policy || !engine.window) { engine_failure(); return 0; }
+    return 1;
 }
 
 int64_t shy_engine_candidate(const char *text)
 {
-    if (engine.models == MAX_MODELS) return -1;
+    invalidate_forecast();
+    if (engine.failed || !engine.policy || engine.models == MAX_MODELS) { engine_failure(); return -1; }
     candidate *c = &engine.candidates[engine.models++];
     c->parameters = parse_text(text);
     c->selection.folds = mulib_json_new(MULIB_JSON_ARRAY);
@@ -130,6 +152,7 @@ static int predict(const candidate *c, size_t training, size_t horizon, double *
 
 int64_t shy_engine_fold(int64_t index, int64_t training, int64_t horizon, int64_t validation)
 {
+    invalidate_forecast();
     if (index < 0 || (size_t)index >= engine.models || training < 2 || horizon < 1 || horizon > 365 ||
         (uint64_t)training+(uint64_t)horizon > engine.count) return 0;
     candidate *c = &engine.candidates[index];
@@ -150,7 +173,7 @@ int64_t shy_engine_fold(int64_t index, int64_t training, int64_t horizon, int64_
     if (built && engine.lineage) {
         int64_t start = shy_integer(engine.lineage, "start", INT64_C(253402300799));
         int64_t step = shy_integer(engine.lineage, "step", INT64_C(253402300800));
-        built = shy_add(fold, "cutoff", mulib_json_number((double)(start+(training-1)*step))) &&
+        built = shy_add(fold, "cutoff", mulib_json_number((double)(start+training*step-1))) &&
             shy_add(fold, "target_at", mulib_json_number((double)(start+(int64_t)target*step)));
     }
     if (!built) mulib_json_destroy(fold);
@@ -212,18 +235,19 @@ static int market_reference(double *out)
 
 int64_t shy_engine_finish(int64_t selected, int64_t horizon, int64_t rank, int64_t coverage)
 {
-    if (engine.failed || !engine.policy || horizon < 1 || horizon > 365 || !market_reference(&engine.market)) return 2;
+    invalidate_forecast();
+    if (engine.failed || !engine.policy || horizon < 1 || horizon > 365 || coverage<1 || coverage>9999 ||
+        !market_reference(&engine.market)) return engine_failure();
     char policy_id[65];
-    if (!shy_json_digest(engine.policy, NULL, policy_id)) return 2;
+    if (!shy_json_digest(engine.policy, NULL, policy_id)) return engine_failure();
     candidate *chosen = selected >= 0 && (size_t)selected < engine.models ? &engine.candidates[selected] : NULL;
     assessment *validation = chosen ? &chosen->validation : NULL;
-    int complete = validation && validation->attempted && validation->evaluated == validation->attempted;
-    double radius = 0;
+    int complete = validation && shy_engine_complete(selected) && validation->attempted && validation->evaluated == validation->attempted;
+    double radius = 0, point = -1, variance = NAN;
     int ok = complete && rank >= 1 && (size_t)rank <= validation->evaluated &&
-        predict(chosen, engine.count, (size_t)horizon, &engine.point, &engine.variance) &&
+        predict(chosen, engine.count, (size_t)horizon, &point, &variance) &&
         mulib_statsproc_quantile(validation->residuals, validation->evaluated,
             validation->evaluated == 1 ? 0 : (double)(rank-1)/(double)(validation->evaluated-1), &radius);
-    if (!ok) engine.point = -1;
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT), *models = mulib_json_new(MULIB_JSON_ARRAY);
     for (size_t i = 0; i < engine.models; ++i) {
         mulib_json_t *row = mulib_json_new(MULIB_JSON_OBJECT);
@@ -238,14 +262,15 @@ int64_t shy_engine_finish(int64_t selected, int64_t horizon, int64_t rank, int64
         shy_add(interval, "calibration_samples", mulib_json_number(validation ? (double)validation->evaluated : 0)) &&
         shy_add(interval, "rank", mulib_json_number((double)rank)) &&
         shy_add(interval, "radius_minor", ok ? mulib_json_number(radius) : mulib_json_new(MULIB_JSON_NULL)) &&
-        shy_add(interval, "lower_minor", ok ? mulib_json_number(fmax(0, engine.point-radius)) : mulib_json_new(MULIB_JSON_NULL)) &&
-        shy_add(interval, "upper_minor", ok ? mulib_json_number(fmin(1e12, engine.point+radius)) : mulib_json_new(MULIB_JSON_NULL));
+        shy_add(interval, "lower_minor", ok ? mulib_json_number(fmax(0, point-radius)) : mulib_json_new(MULIB_JSON_NULL)) &&
+        shy_add(interval, "upper_minor", ok ? mulib_json_number(fmin(1e12, point+radius)) : mulib_json_new(MULIB_JSON_NULL));
     if (!built) { mulib_json_destroy(interval); goto fail; }
     if (!shy_add(out, "interval", interval)) goto fail;
     if (!shy_add(out, "schema", mulib_json_string("shylock.forecast/v2")) ||
         !shy_add(out, "kind", mulib_json_string("evaluated_forecast")) ||
         !shy_add(out, "status", mulib_json_string(ok ? "forecast" : !chosen ? "no_eligible_model" : "forecast_error")) ||
         !shy_add(out, "selection_policy", mulib_json_string("complete-mae-rmse-order/v1")) ||
+        !shy_add(out, "cutoff_policy", mulib_json_string("complete-training-buckets/v1")) ||
         !shy_add(out, "mulib_revision", mulib_json_string(SHY_MULIB_REVISION)) ||
         !shy_add(out, "series_blake3", mulib_json_string(engine.digest)) ||
         !shy_add(out, "policy", shy_clone(engine.policy)) ||
@@ -255,27 +280,29 @@ int64_t shy_engine_finish(int64_t selected, int64_t horizon, int64_t rank, int64
         !shy_add(out, "market_reference_minor", mulib_json_number(engine.market)) ||
         !shy_add(out, "selected_estimator", chosen ? shy_clone(chosen->parameters) : mulib_json_new(MULIB_JSON_NULL)) ||
         !shy_add(out, "validation", chosen ? assessment_json(validation) : mulib_json_new(MULIB_JSON_NULL)) ||
-        !shy_add(out, "forecast_minor", ok ? mulib_json_number(engine.point) : mulib_json_new(MULIB_JSON_NULL)) ||
-        !shy_add(out, "model_variance_minor_squared", ok && isfinite(engine.variance) ? mulib_json_number(engine.variance) : mulib_json_new(MULIB_JSON_NULL)) ||
-        !shy_add(out, "reference_minor", ok ? mulib_json_number((double)llround(engine.point)) : mulib_json_new(MULIB_JSON_NULL))) goto fail;
+        !shy_add(out, "forecast_minor", ok ? mulib_json_number(point) : mulib_json_new(MULIB_JSON_NULL)) ||
+        !shy_add(out, "model_variance_minor_squared", ok && isfinite(variance) ? mulib_json_number(variance) : mulib_json_new(MULIB_JSON_NULL)) ||
+        !shy_add(out, "reference_minor", ok ? mulib_json_number((double)llround(point)) : mulib_json_new(MULIB_JSON_NULL))) goto fail;
     if (!mulib_json_set(out, "candidates", models)) goto fail;
     models = NULL;
     if (engine.lineage && !shy_add(out, "cohort_lineage", shy_clone(engine.lineage))) goto fail;
     if (engine.selection && !shy_add(out,"ledger_selection",shy_clone(engine.selection))) goto fail;
     if (!seal(out, "forecast_id")) goto fail;
-    mulib_json_destroy(engine.forecast); engine.forecast = out;
+    engine.forecast = out;
+    if (ok) { engine.point=point; engine.variance=variance; }
     return ok ? 0 : 2;
 fail:
-    mulib_json_destroy(out); mulib_json_destroy(models); engine.failed = 1; return 2;
+    mulib_json_destroy(out); mulib_json_destroy(models); return engine_failure();
 }
 
 int64_t shy_engine_emit(void)
 {
     if (!engine.forecast || engine.failed) return shy_error("cannot allocate evaluated forecast");
-    return shy_emit(shy_clone(engine.forecast));
+    int64_t status=shy_emit(shy_clone(engine.forecast));
+    return status ? engine_failure() : 0;
 }
 
-int64_t shy_engine_reference(void) { return engine.point < 0 ? -1 : (int64_t)llround(engine.point); }
+int64_t shy_engine_reference(void) { return engine.failed || !engine.forecast || engine.point < 0 ? -1 : (int64_t)llround(engine.point); }
 
 const char *shy_engine_field(const char *key)
 {
@@ -286,6 +313,8 @@ const char *shy_engine_field(const char *key)
 
 int64_t shy_engine_number(const char *key)
 {
+    if (!strcmp(key,"samples")) return (int64_t)engine.count;
+    if (!strcmp(key,"start") || !strcmp(key,"step")) return shy_integer(engine.lineage,key,INT64_C(253402300800));
     if (!strcmp(key, "verified")) return engine.lineage != NULL;
     if (!strcmp(key, "scale")) return shy_integer(engine.lineage, key, 6);
     if (!strcmp(key, "guests")) return shy_integer(mulib_json_get(engine.lineage, "context"), key, 64);
@@ -321,21 +350,26 @@ int64_t shy_money_operation(const char *operation, int64_t a, int64_t b,
 
 int64_t shy_engine_pricing_policy(const char *text)
 {
+    mulib_json_destroy(engine.optimization); engine.optimization=NULL;
     mulib_json_destroy(engine.pricing); engine.pricing = parse_text(text);
-    return engine.pricing != NULL;
+    if (!engine.pricing) engine_failure();
+    return !engine.failed;
 }
 
 int shy_engine_demand(const mulib_json_t *demand)
 {
+    mulib_json_destroy(engine.optimization); engine.optimization=NULL;
     mulib_json_destroy(engine.demand); engine.demand = shy_clone(demand);
-    return engine.demand != NULL;
+    if (!engine.demand) engine_failure();
+    return !engine.failed;
 }
 
 int64_t shy_engine_take_demand(void) { return shy_engine_demand(shy_document_borrow()); }
 
 int64_t shy_engine_optimize(int64_t low, int64_t high, int64_t tick, int64_t cost, const char *objective)
 {
-    if (low < 0 || high < low || high > INT64_C(1000000000000) || tick < 1 || cost < 0) return -1;
+    mulib_json_destroy(engine.optimization); engine.optimization=NULL;
+    if (engine.failed || low < 0 || high < low || high > INT64_C(1000000000000) || tick < 1 || cost < 0) return -1;
     const mulib_json_t *rows = mulib_json_get(engine.demand, "scenarios");
     size_t n = mulib_json_size(rows);
     if (!n || n > 4096) return -1;
@@ -363,7 +397,7 @@ int64_t shy_engine_optimize(int64_t low, int64_t high, int64_t tick, int64_t cos
         !shy_add(out, "objective_minor", mulib_json_number(result.score)) ||
         !shy_add(out, "evaluations", mulib_json_number((double)result.evaluations)) ||
         !shy_add(out, "effective_floor_minor", mulib_json_number((double)low)) ||
-        !shy_add(out, "effective_cap_minor", mulib_json_number((double)high))) { mulib_json_destroy(out); return -1; }
+        !shy_add(out, "effective_cap_minor", mulib_json_number((double)high))) { mulib_json_destroy(out); engine_failure(); return -1; }
     mulib_json_destroy(engine.optimization); engine.optimization = out;
     return (int64_t)result.price;
 }
@@ -371,13 +405,17 @@ int64_t shy_engine_optimize(int64_t low, int64_t high, int64_t tick, int64_t cos
 int64_t shy_engine_decision(const char *status, int64_t proposed, int64_t formula_rate,
     int64_t final_rate, const char *formula_audit, const char *quote)
 {
-    if (engine.failed) return shy_error("pricing audit allocation failed");
+    if (engine.failed || !shy_document_ok()) { engine_failure(); return shy_error("pricing audit allocation failed"); }
     mulib_json_t *out = mulib_json_new(MULIB_JSON_OBJECT);
     char policy_id[65];
     mulib_json_t *calculation = *formula_audit ? parse_text(formula_audit) : mulib_json_new(MULIB_JSON_NULL);
     mulib_json_t *stay = *quote ? parse_text(quote) : mulib_json_new(MULIB_JSON_NULL);
+    int valid = (!*formula_audit || mulib_json_typeof(calculation)==MULIB_JSON_OBJECT) &&
+        (!*quote || mulib_json_typeof(stay)==MULIB_JSON_OBJECT) &&
+        (!strcmp(status,"priced") ? engine.forecast && engine.point>=0 && *formula_audit && *quote &&
+            proposed>=0 && formula_rate>=0 && final_rate>=0 && final_rate<=INT64_C(1000000000000) : final_rate<0 && !*quote);
     if (*quote && (!stay || !seal(stay, "quote_id"))) { mulib_json_destroy(stay); stay = NULL; }
-    int built = shy_json_digest(engine.pricing, NULL, policy_id) &&
+    int built = valid && shy_json_digest(engine.pricing, NULL, policy_id) &&
         shy_add(out, "schema", mulib_json_string("shylock.pricing-decision/v1")) &&
         shy_add(out, "kind", mulib_json_string("pricing_decision")) &&
         shy_add(out, "status", mulib_json_string(status)) &&
@@ -395,10 +433,10 @@ int64_t shy_engine_decision(const char *status, int64_t proposed, int64_t formul
     if (built) { built = shy_add(out, "formula", calculation); calculation = NULL; }
     if (built) { built = shy_add(out, "quote", stay); stay = NULL; }
     mulib_json_destroy(calculation); mulib_json_destroy(stay);
-    if (!built || !seal(out, "decision_id")) { mulib_json_destroy(out); return 2; }
+    if (!built || !seal(out, "decision_id")) { mulib_json_destroy(out); return engine_failure(); }
     if (engine.forecast) (void)shy_extensions_enqueue("forecast.created", engine.forecast);
     int64_t emitted = shy_emit(out);
-    return emitted ? emitted : strcmp(status, "priced") ? 2 : 0;
+    return emitted ? engine_failure() : strcmp(status, "priced") ? 2 : 0;
 }
 
 int64_t shy_model_optimize(const char *text, int64_t low, int64_t high)

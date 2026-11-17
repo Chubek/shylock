@@ -87,6 +87,14 @@ For N samples, S selection targets, V validation targets and horizon H:
    but never their own target. Validation does not retune the selected parameters.
 5. Fit the winner to the final historical window and forecast H intervals ahead.
 
+For cohort input, each fold's inclusive `cutoff` is the **end** of its final
+training bucket: `start + training_samples * step - 1`. `target_at` is the target
+bucket's start, strictly later than that cutoff. Captures inside a training
+bucket may be later than its start; labeling the start as the cutoff would
+misrepresent information availability. Both `forecast` and legacy `backtest`
+now declare `cutoff_policy:"complete-training-buckets/v1"`. Raw arrays still
+have no authenticated timestamp or inferred calendar spacing.
+
 The input must satisfy `N-V-S-H+1 >= minimum_training`. Every source sample is
 nonnegative integer minor units <=1e12. All numerical fitting uses canonical
 MuLIB histprice/statsprice kernels; On1x owns validation, cutoffs and selection.
@@ -167,6 +175,9 @@ Additional admission checks prevent accidental context mixing:
 - Every capture must be at or before `as_of`. Quote tax mode must match the
   cohort's included/excluded tax scope. Fees already included in cohort rates
   cannot have extra fees silently added a second time.
+- Every sampling bucket must also have ended: `start + step * count - 1 <= as_of`.
+  This applies to file-based `price` as well as `price-ledger`. An early capture
+  does not establish that a still-open bucket is a complete historical sample.
 - `decision=demand` requires a replayable `shylock.demand/v1` artifact; legacy
   unlabelled demand arrays remain available only to the old `optimize` workflow.
 - Demand must replay exactly and match cohort name, currency/scale, guests and
@@ -231,6 +242,26 @@ policy and orchestration. C11 `engine.c` owns copied samples, JSON/fold/lineage
 lifetimes and MuLIB numeric calls. It borrows no resource after its session closes.
 The native scalar bridge remains trusted; no upstream patch or second MuLIB
 implementation translation unit was introduced.
+
+Engine results publish atomically: a reference is available only after its
+forecast and provenance have been completely constructed. Reconfiguration
+invalidates old forecasts; failed loads, allocation and publication poison the
+native session until close/open. Expected mathematical model failures remain
+explicit error forecasts, not reusable numeric references. Failed demand retries
+clear earlier optimization results. Formula/quote serialization failures are
+checked before a document replacement can reset the sticky error, and a success
+decision cannot omit its forecast, calculation or quote. The legacy estimate
+bridge also drops cached lineage on failure.
+
+### Compatibility
+
+No dependency, upstream change or ledger migration is required. Existing valid
+inputs remain readable. `price` now refuses a cohort whose last bucket has not
+ended at `as_of` (exit 2, without a recommendation); select completed buckets
+instead of moving the cutoff forward without supporting evidence. Corrected
+cutoffs and the additive cutoff-policy field change newly generated forecast,
+backtest and downstream decision artifacts/IDs. Retained historical artifacts
+are not rewritten, and these assertions still do not authenticate review time.
 
 `tests/engine.py` exercises every model family and market method, disjoint
 selection/holdout targets, prefix-only replay, coverage failures, quote scales

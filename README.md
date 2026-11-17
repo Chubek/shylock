@@ -193,6 +193,14 @@ are append-only with optimistic revision IDs; `reject`, `revise`, `history` and
 through forecasting and formula decisions. See [Poindexter](manual/poindexter.md)
 for the schema, commands, compatibility and limitations.
 
+The core engine now labels chronological cutoffs at the end of complete training
+buckets, not before their retained captures. File-based `price`, like
+`price-ledger`, rejects sampling intervals still open at `as_of`. Forecasts and
+decisions fail closed on incomplete construction, stale cached results and
+serialization/publication failures. New forecast/backtest artifacts add
+`cutoff_policy`; corrected timestamps/metadata change derived IDs, without a
+ledger migration or new dependency. See [pricing contracts](manual/pricing.md).
+
 ## Poindexter TUI and GUI
 
 ```sh

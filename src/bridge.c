@@ -78,16 +78,21 @@ static struct {
     mulib_json_t *cohort;
 } forecast_context;
 
+static void clear_estimate(void)
+{
+    mulib_json_destroy(forecast_context.cohort);
+    memset(&forecast_context,0,sizeof forecast_context);
+}
 static int64_t estimate_error(const char *message, int64_t emit)
 {
+    clear_estimate();
     shy_error(message);
     return emit ? 2 : -1;
 }
 
 int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
 {
-    mulib_json_destroy(forecast_context.cohort);
-    memset(&forecast_context, 0, sizeof forecast_context);
+    clear_estimate();
     if (horizon < 1 || horizon > 365) return estimate_error("horizon must be in 1..365", emit);
     size_t count;
     double values[4096];
@@ -121,7 +126,9 @@ int64_t shy_estimate(const char *path, int64_t horizon, int64_t emit)
         mulib_json_destroy(out);
         return (int64_t)llround(forecast.point);
     }
-    return shy_emit(out);
+    int64_t status=shy_emit(out);
+    if (status) clear_estimate();
+    return status;
 }
 
 static char formula_digest[65];

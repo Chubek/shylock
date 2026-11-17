@@ -78,6 +78,31 @@ extern int64_t shy_store_close(void);
 extern int64_t shy_store_select(const char *cohort);
 extern const char *shy_stored_field(int64_t index, const char *key);
 extern int64_t shy_stored_number(int64_t index, const char *key);
+extern int64_t shy_estimate(const char *path,int64_t horizon,int64_t emit);
+extern int64_t shy_report_rate(int64_t reference,int64_t proposed,int64_t adjusted,
+    int64_t weekend,int64_t premium,int64_t floor,int64_t cap,int64_t tick);
+
+static int legacy_estimate_failure(void)
+{
+    if (shy_estimate("tests/fixtures/series.json",1,0)<0 || shy_estimate("tests/fixtures/series.json",0,0)!=-1) return 0;
+    FILE *file=tmpfile();
+    if (!file) return 0;
+    int saved=dup(STDOUT_FILENO),ok=saved>=0 && fflush(stdout)==0;
+    if (!ok || dup2(fileno(file),STDOUT_FILENO)<0) {
+        if (saved>=0) close(saved);
+        fclose(file); return 0;
+    }
+    int64_t status=shy_report_rate(100,100,100,0,0,0,200,1);
+    if (fflush(stdout)) ok=0;
+    if (dup2(saved,STDOUT_FILENO)<0) ok=0;
+    close(saved);
+    char text[8192]; rewind(file); size_t n=fread(text,1,sizeof text,file);
+    if (ferror(file) || n==sizeof text) ok=0;
+    if (fclose(file)) ok=0;
+    mulib_json_t *record=ok && status==0 ? mulib_json_parse(text,n,NULL) : NULL;
+    ok=record && !mulib_json_get(record,"forecast_minor") && !mulib_json_get(record,"cohort_lineage");
+    mulib_json_destroy(record); return ok;
+}
 
 int64_t shy_native_document_test(void)
 {
@@ -132,13 +157,21 @@ int64_t shy_native_engine_test(void)
         shy_engine_fold(0, 4, 2, 0) == 0 && shy_engine_fold(0, 3, 1, 0) == 1 &&
         shy_engine_fold(0, 4, 1, 1) == 1 && shy_engine_finish(0, 1, 1, 9000) == 0 &&
         shy_engine_reference() == 20000 && shy_engine_number("verified") == 0;
+    /* A failed re-finalization must not leave the last successful reference or
+       serialized forecast available. Reopening is the explicit recovery. */
+    ok = ok && shy_engine_finish(0, 0, 1, 9000)==2 && shy_engine_reference()==-1 && shy_engine_emit()==2 &&
+        shy_engine_finish(0, 1, 1, 9000)==2;
+    ok = ok && shy_engine_open("tests/fixtures/series.json")==5 && shy_engine_reference()==-1 &&
+        shy_engine_number("samples")==5 && shy_engine_number("start")==-1 &&
+        shy_engine_open("tests/fixtures/rental.html")==-1 && shy_engine_number("samples")==0 &&
+        shy_engine_policy("{\"window\":4}")==0 && shy_engine_fold(0,2,1,0)==0;
     shy_engine_close(); shy_engine_close();
     ok = ok && shy_money_operation("scale", 1, 5000, 10000, "EUR", 2) == 1 &&
         shy_money_operation("scale", 1000000000000LL, 365, 1, "EUR", 2) == -1 &&
         shy_money_operation("add", 1, 2, 1, "JPY", 0) == 3 &&
         shy_money_operation("sub", 1, 2, 1, "KWD", 3) == -1 &&
         shy_money_operation("add", 1, 2, 1, "JPY", 2) == -1;
-    return ok;
+    return ok && legacy_estimate_failure();
 }
 
 static int fixture_resolve(void *context,const char *host,char address[16])

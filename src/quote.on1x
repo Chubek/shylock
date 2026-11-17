@@ -48,6 +48,7 @@ fn quote_json(section:string,rate:i64,currency:string,scale:i64)->(i64,string) {
   buffer_append(out,",\"tax_minor\":"); buffer_append(out,SX.sexpr_nat(tax));
   buffer_append(out,",\"subtotal_ex_tax_minor\":"); buffer_append(out,SX.sexpr_nat(net));
   buffer_append(out,",\"total_minor\":"); buffer_append(out,SX.sexpr_nat(total)); buffer_byte(out,125);
+  if shy_document_ok()!=1 { return (shy_error("cannot retain complete quote provenance"),""); }
   return (0,buffer_text(out));
 }
 

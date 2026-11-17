@@ -3,7 +3,10 @@
 #include "shylock.h"
 /* One synchronous engine session. Open copies numeric samples and owns lineage;
    policy/candidate JSON is copied on entry. All string views borrow the session.
-   Close releases every candidate, fold, snapshot and decision, even on failure. */
+   Close releases every candidate, fold, snapshot and decision, even on failure.
+   A failed load/build/publication poisons the session until close/open. A
+   reference is available only after complete forecast construction succeeds;
+   policy/candidate/fold changes invalidate any previous forecast. */
 int64_t shy_engine_open(const char *series);
 /* Borrows input for the call; owns a validated copy. Uses compact JSON bytes
    for series_blake3 when the source is an in-memory ledger cohort. */

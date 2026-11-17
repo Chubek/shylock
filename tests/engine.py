@@ -176,6 +176,11 @@ with tempfile.TemporaryDirectory(prefix="shylock-engine-") as directory:
     assert result["formula"]["reference_minor"] == 18000 and result["formula"]["effective_cap_minor"] == 19800
     assert result == run("price", cohort_file, policy_file)
     assert len(result["decision_id"]) == len(result["policy_id"]) == len(result["quote"]["quote_id"]) == 64
+    # The final interval, not just its latest capture, must have ended at as_of.
+    interval_end = reviewed["start"] + reviewed["step"] * reviewed["count"] - 1
+    assert run("price", cohort_file, save(policy_file, dict(pricing, as_of=interval_end)))["status"] == "priced"
+    assert run("price", cohort_file, save(policy_file, dict(pricing, as_of=interval_end-1)), code=2) is None
+    save(policy_file, pricing)
     observed = run("price", cohort_file, policy_file, config=ROOT / "extensions/example.json", raw=True)
     assert json.loads(observed.stdout) == result
     audits = [json.loads(line) for line in observed.stderr.splitlines() if line.startswith("{")]
@@ -232,6 +237,34 @@ with tempfile.TemporaryDirectory(prefix="shylock-engine-") as directory:
     tex = run("print-report", ROOT / "reports/pricing.json", data_file, raw=True).stdout
     assert "67900" in tex and "\\begin{document}" in tex
 
+    # Captures within a bucket may occur after its start. Both backtesting APIs
+    # must label the true complete training-bucket cutoff, strictly before target.
+    for i in range(5):
+        captured = run("extract", FIXTURE / "rental.html", "https://example.org/offset", 1000 + 60*i + 59)
+        run("review", db, save(capture_file, captured), 1, "offset", "tester",
+            FIXTURE / "rental.html", FIXTURE / "context.json")
+    offset = run("cohort", db, "offset", "EUR", 1000, 60, 5)
+    selected = save(folder / "offset.json", offset)
+    p = dict(default, minimum_training=3, horizon=1, selection_samples=1, validation_samples=1)
+    evaluated = run("forecast", selected, save(policy_file, p))
+    two_step = run("forecast", selected, save(policy_file, dict(p, horizon=2, minimum_training=2,
+                   candidates=[{"name": "last", "model": "last"}])))
+    backtested = run("backtest", selected, 1, 2)
+    for report in (evaluated, two_step, backtested, run("backtest", selected, 2, 2)):
+        assert report["cutoff_policy"] == "complete-training-buckets/v1"
+        folds = report["folds"] if "folds" in report else report["validation"]["folds"] + [
+            fold for candidate in report["candidates"] for fold in candidate["selection"]["folds"]]
+        for fold in folds:
+            n = fold["training_samples"]
+            assert fold["cutoff"] == 1000 + n*60 - 1
+            assert fold["cutoff"] < fold["target_at"]
+            assert all(ref["captured_at"] <= fold["cutoff"] for bucket in offset["buckets"][:n] for ref in bucket["evidence"])
+    p = copy.deepcopy(pricing)
+    p["forecast"].update(minimum_training=3, selection_samples=1, validation_samples=1)
+    p["as_of"] = 1299
+    assert run("price", selected, save(policy_file, p))["status"] == "priced"
+    assert run("price", selected, save(policy_file, dict(p, as_of=1298)), code=2) is None
+
     # Stay length is Gregorian, not a subtraction of YYYYMMDD encodings.
     for name, start, end, nights in (("leap", "2028-02-28", "2028-03-01", 2),
                                       ("year", "2026-12-31", "2027-01-02", 2),
@@ -247,5 +280,21 @@ with tempfile.TemporaryDirectory(prefix="shylock-engine-") as directory:
         p["forecast"].update(selection_samples=1, validation_samples=1)
         p["charges"]["nights"] = nights
         assert run("price", selected, save(policy_file, p))["quote"]["charges"]["nights"] == nights
+
+    # Buffered stdout failure is a command failure, even after a valid result
+    # was constructed. This exercises real publication rather than a mock sink.
+    if Path("/dev/full").exists():
+        env = dict(os.environ, SHY_SANDBOX="off")
+        for key in ("SHY_EXTENSIONS", "SHY_FORMULA_SANDBOX", "SHY_NATIVE_PLUGINS"):
+            env.pop(key, None)
+        commands = [("forecast", FIXTURE / "series.json", ROOT / "policies/forecast.json"),
+                    ("backtest", FIXTURE / "series.json", 1, 2),
+                    ("quote", ROOT / "policies/quote.json"), ("optimize-model", ROOT / "policies/model.json"),
+                    ("price", cohort_file, save(policy_file, pricing))]
+        for command in commands:
+            with open("/dev/full", "wb") as sink:
+                failed = subprocess.run([str(ROOT / "shylock"), *map(str, command)], cwd=ROOT, env=env,
+                                        stdout=sink, stderr=subprocess.PIPE, timeout=30)
+            assert failed.returncode == 2 and b"Sanitizer" not in failed.stderr, (command, failed.returncode, failed.stderr)
 
 print("Forecast selection/holdout, kernels, quotes, scenario risk and verified pricing tests passed.")

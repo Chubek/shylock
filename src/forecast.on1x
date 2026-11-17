@@ -111,6 +111,7 @@ fn forecast_run(count:i64)->i64 {
     }
   }
   let rank=(coverage*validation+9999)/10000;
+  if shy_document_ok()!=1 { return shy_error("cannot retain complete forecast policy and candidate provenance"); }
   return shy_engine_finish(best,horizon,rank,coverage);
 }
 
