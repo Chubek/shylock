@@ -11,6 +11,8 @@ import "model.on1x";
 import "dragnet.on1x";
 import "intelligence.on1x";
 import "dragnet_naive.on1x";
+import "dragnet_collection.on1x";
+import "ledger_pricing.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -49,6 +51,15 @@ fn run_command() -> i64 {
     return naive_find(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),true);
   }
   if command=="find-rule-replay" && count==1 { return naive_replay(a,true); }
+  if command=="collect" && count==1 { return collect(a); }
+  if command=="collect-replay" && count==1 { return collection_replay(a,true); }
+  if command=="replay-collection" && count==2 { return collection_stored_replay(a,b); }
+  if command=="review-collection" && (count==6 || count==7) {
+    return collection_review(a,b,parse_int(c),parse_int(d),CLI.basis_command_line_get_env("SHY_5"),
+      CLI.basis_command_line_get_env("SHY_6"),CLI.basis_command_line_get_env("SHY_7"));
+  }
+  if command=="price-ledger" && (count==3 || count==4) { return price_ledger(a,b,c,d); }
+  if command=="forecast-ledger" && count==3 { return forecast_ledger(a,b,c); }
   if command=="browse" && count==1 { return browser_run(a); }
   if command=="openai-account" && count==1 { return openai_profile(a,"","account",false); }
   if command=="model-extract" && count==4 && d=="--live" { return openai_profile(b,a,c,true); }
@@ -158,6 +169,10 @@ fn run_command() -> i64 {
     println("find SNAPSHOT_OR_IR_JSON TARGET");
     println("find-rule SOURCE_JSON RULE_JSON TARGET [deterministic | hybrid|model PROFILE --live]");
     println("find-rule-replay ARTIFACT_JSON");
+    println("collect COLLECTION_JOB_JSON");
+    println("collect-replay COLLECTION_JSON");
+    println("replay-collection DATABASE COLLECTION_ID");
+    println("review-collection DATABASE COLLECTION_JSON ENTRY CANDIDATE COHORT REVIEWER [CONTEXT_JSON]");
     println("openai-account OPENAI_PROFILE_JSON");
     println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
     println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
@@ -167,6 +182,8 @@ fn run_command() -> i64 {
     println("forecast SERIES_JSON FORECAST_POLICY_JSON");
     println("quote QUOTE_INPUT_JSON");
     println("price COHORT_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
+    println("price-ledger DATABASE SELECTION_JSON PRICING_POLICY_JSON [DEMAND_JSON]");
+    println("forecast-ledger DATABASE SELECTION_JSON FORECAST_POLICY_JSON");
     println("optimize-model MODEL_POLICY_JSON");
     println("discover PROVIDER QUERY [SERP_HTML [LIMIT]]");
     println("discover-replay DISCOVERY_JSON");

@@ -67,4 +67,21 @@ int64_t shy_naive_finish(const char *json);
 int64_t shy_naive_emit(const char *mode, const char *profile, const char *target, int64_t call);
 /* Borrowed, only after full equality with a replayed artifact. */
 const mulib_json_t *shy_naive_verified(void);
+/* Borrow the finalized result for composition; not a replay-verification claim. */
+const mulib_json_t *shy_naive_result(void);
+/* Composed collection scalar ABI. Ownership is documented in collection.h. */
+int64_t shy_collection_begin(const char *expected);
+int64_t shy_collection_ready(void);
+int64_t shy_collection_close(void);
+int64_t shy_collection_size(void);
+int64_t shy_collection_entry_hit(int64_t);
+const char *shy_collection_target(void);
+int64_t shy_collection_source(int64_t,const char *,const char *,const char *);
+const char *shy_collection_discovery_field(const char *);
+const char *shy_collection_hit(int64_t);
+int64_t shy_collection_check(const char *,const char *);
+const char *shy_collection_view(const char *);
+int64_t shy_collection_append(const char *);
+int64_t shy_collection_finish(const char *,int64_t);
+int64_t shy_collection_review_begin(int64_t);
 #endif

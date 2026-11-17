@@ -1,0 +1,179 @@
+# A collection is processing consent for explicit saved sources, never fetch or
+# model consent. Admit every descriptor before loading a page. Paths are local
+# trusted inputs and are not retained as substitutes for immutable provenance.
+fn collection_job_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","target:string","sources:array") ||
+    shy_document_text("",-1,"schema")!="shylock.collection-job/v1" { return false; }
+  let target=shy_document_text("",-1,"target");
+  let size=shy_document_size("",-1,"sources");
+  if target=="" || text_len(target)>128 || size<1 || size>8 { return false; }
+  var i=0;
+  while i<size {
+    if !@fields("closed","sources",i,"discovery:string","hit:integer","snapshot:string","rule:string") ||
+      shy_document_number("sources",i,"hit")>63 { return false; }
+    let discovery=shy_document_text("sources",i,"discovery");
+    let snapshot=shy_document_text("sources",i,"snapshot");
+    let rule_path=shy_document_text("sources",i,"rule");
+    if discovery=="" || snapshot=="" || rule_path=="" || text_len(discovery)>4096 ||
+      text_len(snapshot)>4096 || text_len(rule_path)>4096 { return false; }
+    i=i+1;
+  }
+  return true;
+}
+fn collection_descriptors(path:string)->sexpr {
+  var rows=sx_nil(); var i=0;
+  let directory=Path.basis_path_dir(path);
+  while i<shy_document_size("",-1,"sources") {
+    var row=sx_nil();
+    row=nf_put(row,"discovery",Path.basis_path_join(directory,shy_document_text("sources",i,"discovery")));
+    row=nf_put(row,"snapshot",Path.basis_path_join(directory,shy_document_text("sources",i,"snapshot")));
+    row=nf_put(row,"rule",Path.basis_path_join(directory,shy_document_text("sources",i,"rule")));
+    row=nf_put(row,"hit",nf_integer(shy_document_number("sources",i,"hit")));
+    rows=sx_cons(row,rows); i=i+1;
+  }
+  return NL.basis_list_rev(rows);
+}
+fn collection_duplicate(seen:sexpr,capture:string,rule_hash:string)->i64 {
+  var rest=seen;
+  while sx_kind(rest)==3 {
+    let row=sx_head(rest);
+    if nf_get(row,"capture")==capture && nf_get(row,"rule")==rule_hash { return nf_number(row,"index"); }
+    rest=sx_tail(rest);
+  }
+  return -1;
+}
+fn collection_source_valid(hit:i64)->bool {
+  # Retained programs, parser revision, complete hit order, status and IDs are
+  # replayed before a hit can be used as a source link. No URL canonicalization
+  # merges query strings, fragments, redirects or different listing pages.
+  var status="results"; var diagnostic="";
+  if shy_dragnet_count()==0 {
+    status="no_parsed_hits";
+    diagnostic="empty results, challenge or parse drift are not distinguishable from this response";
+  }
+  if shy_collection_check(status,diagnostic)!=1 || hit<0 || hit>=shy_dragnet_count() { return false; }
+  if shy_collection_hit(hit)!=shy_naive_meta("source_url") { return false; }
+  if shy_document_parse(shy_naive_meta("snapshot"))!=1 { return false; }
+  let valid=shy_document_has("",-1,"captured_at","integer")==1;
+  shy_document_close(); return valid;
+}
+fn collection_entry(index:i64,hit:i64,duplicate:i64,status:string)->string {
+  let out=buffer_new(); buffer_append(out,"{");
+  nf_json_integer(out,"index",index); buffer_append(out,",");
+  nf_json_integer(out,"hit",hit); buffer_append(out,",");
+  nf_json_nullable(out,"duplicate_of",duplicate); buffer_append(out,",");
+  nf_json_string(out,"status",status); buffer_append(out,",");
+  nf_json_string(out,"discovery_id",shy_collection_discovery_field("discovery_id"));
+  buffer_append(out,"}"); return buffer_text(out);
+}
+fn collection_summary(target:string,size:i64,duplicates:i64,candidates:i64,conflicts:i64,unresolved:i64,partial:i64)->string {
+  let out=buffer_new(); buffer_append(out,"{\"schema\":\"shylock.collection/v1\",");
+  nf_json_string(out,"target",target); buffer_append(out,",");
+  var status="needs_review";
+  if partial>0 { status="partial_extraction"; }
+  nf_json_string(out,"status",status);
+  buffer_append(out,",\"policy\":\"explicit-saved-sources/v1\",\"summary\":{");
+  nf_json_integer(out,"entries",size); buffer_append(out,",");
+  nf_json_integer(out,"duplicate_entries",duplicates); buffer_append(out,",");
+  nf_json_integer(out,"unique_capture_rule_pairs",size-duplicates); buffer_append(out,",");
+  nf_json_integer(out,"candidate_representations",candidates); buffer_append(out,",");
+  nf_json_integer(out,"conflicting_candidates",conflicts); buffer_append(out,",");
+  nf_json_integer(out,"unresolved_candidates",unresolved); buffer_append(out,",");
+  nf_json_integer(out,"partial_entries",partial);
+  buffer_append(out,"},\"admission\":\"explicit-review-required\"}"); return buffer_text(out);
+}
+fn collection_run(target:string,descriptors:sexpr,replaying:bool,emit:bool)->i64 {
+  var size=NL.basis_list_length(descriptors);
+  if replaying { size=shy_collection_size(); }
+  if target=="" || text_len(target)>128 || size<1 || size>8 { return shy_error("invalid collection target or source count"); }
+  var rest=descriptors; var seen=sx_nil(); var i=0;
+  var candidates=0; var conflicts=0; var unresolved=0; var duplicates=0; var partial=0;
+  while i<size {
+    var descriptor=sx_nil(); var hit=shy_collection_entry_hit(i);
+    if !replaying { descriptor=sx_head(rest); hit=nf_number(descriptor,"hit"); rest=sx_tail(rest); }
+    if shy_collection_source(i,nf_get(descriptor,"discovery"),nf_get(descriptor,"snapshot"),nf_get(descriptor,"rule"))!=1 ||
+      !collection_source_valid(hit) { return shy_error("collection source replay or exact discovery-hit/snapshot link failed"); }
+    # The substantive extraction/reconciliation pipeline stays in On1x. Replaying
+    # compares every candidate, not just the enclosing collection hash.
+    if naive_process(target,"deterministic","",false)!=0 { return 2; }
+    if shy_document_parse(shy_collection_view("summary"))!=1 { return shy_error("cannot inspect collection extraction summary"); }
+    let n=shy_document_number("",-1,"candidates");
+    let c=shy_document_number("",-1,"conflicting_candidates");
+    let u=shy_document_number("",-1,"unresolved_candidates");
+    shy_document_close();
+    if n<0 || c<0 || u<0 { return shy_error("invalid extraction summary"); }
+    candidates=candidates+n; conflicts=conflicts+c; unresolved=unresolved+u;
+    let capture=text_concat("",shy_naive_meta("snapshot_id"));
+    let rule_hash=text_concat("",shy_naive_meta("rule_hash"));
+    let duplicate=collection_duplicate(seen,capture,rule_hash);
+    if duplicate>=0 { duplicates=duplicates+1; }
+    else {
+      var row=nf_put(sx_nil(),"capture",capture); row=nf_put(row,"rule",rule_hash);
+      seen=sx_cons(nf_put(row,"index",nf_integer(i)),seen);
+    }
+    var status="needs_review";
+    if n==0 { status="empty"; }
+    if shy_naive_meta("legacy_status")!="available" { status="partial_extraction"; partial=partial+1; }
+    if shy_collection_append(collection_entry(i,hit,duplicate,status))!=1 { return shy_error("collection allocation or aggregate size limit failure"); }
+    i=i+1;
+  }
+  var publish=0; if emit { publish=1; }
+  if shy_collection_finish(collection_summary(target,size,duplicates,candidates,conflicts,unresolved,partial),publish)!=1 {
+    return shy_error("collection differs from complete replay or exceeds output limit");
+  }
+  if partial>0 { return 2; } return 0;
+}
+fn collect(path:string)->i64 {
+  if shy_document_open(path)!=1 { return shy_error("cannot read collection job"); }
+  if !collection_job_valid() { shy_document_close(); return shy_error("invalid offline collection job"); }
+  let target=text_concat("",shy_document_text("",-1,"target"));
+  let descriptors=collection_descriptors(path); shy_document_close();
+  if shy_collection_begin("")!=1 { shy_collection_close(); return 2; }
+  let status=collection_run(target,descriptors,false,true);
+  shy_document_close(); shy_collection_close(); return status;
+}
+fn collection_replay(path:string,emit:bool)->i64 {
+  if shy_collection_begin(path)!=1 { shy_collection_close(); return shy_error("cannot read collection replay"); }
+  let target=text_concat("",shy_collection_target());
+  let status=collection_run(target,sx_nil(),true,emit);
+  shy_document_close();
+  if emit || shy_collection_ready()!=1 { shy_collection_close(); }
+  return status;
+}
+fn collection_stored_replay(database:string,id:string)->i64 {
+  if shy_store_open(database)!=1 { return 2; }
+  let loaded=shy_store_collection_begin(id); shy_store_close();
+  if loaded!=1 { shy_collection_close(); return shy_error("cannot read retained collection"); }
+  let target=text_concat("",shy_collection_target());
+  let status=collection_run(target,sx_nil(),true,true);
+  shy_document_close(); shy_collection_close(); return status;
+}
+fn collection_review_source(entry:i64,context:string)->bool {
+  if shy_collection_review_begin(entry)!=1 {
+    shy_error("collection entry is out of range or not replay-verified"); return false;
+  }
+  if naive_replay_loaded(false)!=0 { return false; }
+  if shy_review_naive("",context)!=1 {
+    shy_error("cannot load collection review snapshot or context"); return false;
+  }
+  if shy_review_collection(entry)!=1 {
+    shy_error("cannot retain immutable collection lineage"); return false;
+  }
+  return true;
+}
+fn collection_review(database:string,path:string,entry:i64,candidate:i64,cohort:string,reviewer:string,context:string)->i64 {
+  if entry<0 || candidate<0 || cohort=="" || reviewer=="" { return shy_error("invalid collection review inputs"); }
+  # Full replay precedes a ledger write. Duplicate entries retain the same
+  # evidence IDs, so retries cannot become independent market observations.
+  let replayed=collection_replay(path,false);
+  if replayed!=0 && shy_collection_ready()!=1 { return 2; }
+  var status=2;
+  if shy_store_open(database)==1 && collection_review_source(entry,context) && shy_review_prepare(candidate)==1 {
+    if review_admissible() {
+      var reason="initial acceptance";
+      if shy_review_field("conflict_resolution")!="" { reason=shy_review_field("conflict_resolution"); }
+      status=shy_review_save(candidate,cohort,reviewer,"accepted",reason);
+    } else { shy_error("collection candidate requires comparable context and explicit conflict review"); }
+  }
+  shy_store_close(); shy_naive_close(); shy_collection_close(); return status;
+}

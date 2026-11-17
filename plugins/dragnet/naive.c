@@ -168,6 +168,8 @@ const char *shy_naive_span_digest(int64_t offset,int64_t length)
 }
 const mulib_json_t *shy_naive_verified(void)
 { return !shy_nf.failed && shy_nf.replayed ? shy_nf.result : NULL; }
+const mulib_json_t *shy_naive_result(void)
+{ return !shy_nf.failed ? shy_nf.result : NULL; }
 int64_t shy_naive_emit(const char *mode,const char *profile,const char *target,int64_t call)
 {
     mulib_json_t *out=shy_nf.failed ? NULL : shy_clone(shy_nf.result);

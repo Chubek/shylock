@@ -11,7 +11,7 @@ translation unit for the selected kernels.
 
 Place a checkout of [Chubek/mulib](https://github.com/Chubek/mulib) at
 `third_party/mulib`. Tested against commit
-`151528b50b316aeea804ce2aebf66ef90b9e7100`. Requires GNU Make, Python 3,
+`eeb6de585303e1ea0dfd8bf2260328289b04587c` (hardened Elvi engine). Requires GNU Make, Python 3,
 a C11 compiler, and a C++20 compiler. The Makefile builds On1x using its
 upstream bootstrap scanner, or accepts `ON1XC=/path/to/on1xc` for an existing
 compiler. The CLI uses POSIX shell and process APIs. Live HTTPS uses curl for
@@ -62,6 +62,15 @@ are returned as URLs for selection by the caller. A provider with changed
 markup can produce `no_parsed_hits`. Live providers may block programmatic
 requests. Set `SHY_PROVIDER_ROOT` to select another trusted directory of
 `.elvs` files.
+
+The upgraded Elvi parser filters inert/RCDATA markup, handles malformed heading
+boundaries and ambiguous Google wrappers conservatively, and commits results only
+after bounded parsing succeeds. Discovery records retain `parser_profile` and the
+actual MuLIB revision. Exact `discover-replay` requires the recorded revision and
+profile; retain the original executable for historical replay, or rediscover saved
+HTML under this build to create new evidence. Existing CLI commands and hit fields
+are unchanged. Search transport still uses Shylock's DNS-pinned curl adapter, not
+MuLIB's optional TLS transport.
 
 Dragnet now combines On1x provider/outcome policy and batch admission with C11
 MuLIB adapters. Discovery retains the exact upstream provider program and
@@ -152,6 +161,16 @@ not ChatGPT browser logins/subscriptions. See [browser/IR/model contracts, limit
 security and account setup](manual/intelligence.md).
 
 ## Verified review to recommendation
+
+For offline **discovery → collection → explicit review → ledger forecast/pricing**,
+see [Dragnet pricing integration](manual/dragnet-pricing.md). `collect`,
+`collect-replay`, `review-collection` and `replay-collection` retain source links.
+`forecast-ledger` and `price-ledger` use current reviews with explicit freshness/
+coverage gates, without hand-authored arrays or temporary cohort files. Try:
+
+```sh
+python3 examples/offline-dragnet.py /tmp/opencode/dragnet-example
+```
 
 ```sh
 ./shylock extract tests/fixtures/rental.html https://example.org/cottage 1000 > first.json

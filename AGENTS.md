@@ -177,8 +177,11 @@ documented path.
 
 ## Implemented progress in this archive
 
-The repository gitlink resolves to MuLIB
-151528b50b316aeea804ce2aebf66ef90b9e7100. The four proposed money-text,
+The MuLIB checkout was retested at
+eeb6de585303e1ea0dfd8bf2260328289b04587c (hardened Elvi engine), replacing the
+151528b50b316aeea804ce2aebf66ef90b9e7100 baseline. Discovery records now retain an
+explicit parser profile; exact replay must not silently cross revisions/profiles.
+The four proposed money-text,
 webextract-offer, price-quote and price-backtest headers are absent in that
 revision. Inspect the actual checkout before adopting those interfaces.
 
@@ -205,6 +208,16 @@ and browser automation need independent implementations and verification.
 Use ./build.sh -j4 and make test. Preserve the GNU Make build. The new
 Poindexter suite covers the offline review-to-recommendation flow. Document
 live-provider checks separately.
+
+Dragnet collections now join explicitly selected, replayed discovery hits to
+saved snapshots and NaiveFinder rules. `collect`, `collect-replay`,
+`review-collection` and `replay-collection` retain complete provenance without
+implicit acquisition/model calls. Collection links survive review revisions and
+cohort references. `forecast-ledger`/`price-ledger` construct an owned cohort from
+current review heads under the writer lock, then run On1x freshness/coverage gates
+and pricing outside the lock. Preserve full recomputation on replay, explicit
+review admission, duplicate idempotency and independent partial-extraction status.
+Read manual/dragnet-pricing.md and keep tests/collection.py passing.
 
 ## The Use of On1x Metaprogramming Features
 

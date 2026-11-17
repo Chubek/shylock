@@ -15,6 +15,8 @@ extern fn shy_store_replay(extraction:string)->i64;
 extern fn shy_store_naive_begin(extraction:string)->i64;
 extern fn shy_review_naive(html:string,context:string)->i64;
 extern fn shy_review_is_naive()->i64;
+extern fn shy_review_collection(index:i64)->i64;
+extern fn shy_store_collection_begin(id:string)->i64;
 extern fn shy_review_conflict()->i64;
 extern fn shy_review_source_field(key:string)->string;
 extern fn shy_store_incompatible(index:i64,field:string,reference:i64,expected:string)->i64;
@@ -124,11 +126,15 @@ fn cohort_difference(index:i64,reference:i64)->string {
   return "";
 }
 
-fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64,rich:i64)->i64 {
+fn cohort_interval_valid(cohort:string,currency:string,start:i64,step:i64,count:i64)->bool {
   let scale=shy_money_scale(currency);
-  if cohort=="" || scale<0 || start<0 || start>253402300799 || step<1 || count<2 || count>4096 ||
-     step>(253402300800-start)/count { return shy_error("invalid cohort interval or currency"); }
-  if shy_store_open(path)!=1 { return 2; }
+  return cohort!="" && text_len(cohort)<=128 && scale>=0 && start>=0 && start<=253402300799 &&
+    step>=1 && count>=2 && count<=4096 && step<=(253402300800-start)/count;
+}
+# Shared admission for exported cohorts and direct ledger pricing. The caller
+# holds the writer lock across selection, compatibility checks and construction.
+fn cohort_admit(cohort:string,currency:string,start:i64,step:i64,count:i64,rich:i64)->i64 {
+  let scale=shy_money_scale(currency);
   var result=0;
   let size=shy_store_select(cohort);
   if size<0 { result=2; }
@@ -156,6 +162,12 @@ fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64
     }
     i=i+1;
   }
+  return result;
+}
+fn series(path:string,cohort:string,currency:string,start:i64,step:i64,count:i64,rich:i64)->i64 {
+  if !cohort_interval_valid(cohort,currency,start,step,count) { return shy_error("invalid cohort interval or currency"); }
+  if shy_store_open(path)!=1 { return 2; }
+  var result=cohort_admit(cohort,currency,start,step,count,rich);
   if result==0 { result=shy_store_series(cohort,currency,start,step,count,rich); }
   else { shy_error("cohort contains incompatible currency, scale, stay context or unverified reviews"); }
   shy_store_close();

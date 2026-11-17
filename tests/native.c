@@ -5,6 +5,8 @@
 #include "../src/engine.h"
 #include "../plugins/dragnet/dragnet.h"
 #include "mulib-kvdb.h"
+#include "mulib-elvi-scrape.h"
+#include "detail/mulib-webscan.h"
 #include "../plugins/poindexter/ui.h"
 #if SHY_HAVE_SDL2
 #include <SDL.h>
@@ -143,6 +145,26 @@ static int fixture_resolve(void *context,const char *host,char address[16])
 { (void)host; strcpy(address,context); return 1; }
 int64_t shy_native_dragnet_test(void)
 {
+    mulib_elvi_scrape_program_t program;
+    if (!mulib_elvi_scrape_load("third_party/mulib/library/elvi-scrape/google.elvs",&program,NULL)) return 0;
+    const char prefix[]="<a href='https://example.org/'><h3>Safe</h3></a>";
+    size_t size=sizeof prefix-1+4096*6;
+    char *hostile=malloc(size+1);
+    if (!hostile) return 0;
+    memcpy(hostile,prefix,sizeof prefix-1);
+    for (size_t i=sizeof prefix-1;i<size;i+=6) memcpy(hostile+i,"<a x='",6);
+    hostile[size]=0;
+    mulib_elvi_scrape_result_t result[2],before[2];
+    memset(result,0xa5,sizeof result); memcpy(before,result,sizeof result);
+    size_t count=123;
+    const char *cursor=hostile; mulib_webscan_tag_ tag; size_t work=4;
+    int bounded=mulib_webscan_next_work_(&cursor,&tag,&work)==-1 && !work;
+    int parsed=mulib_elvi_scrape_parse(&program,hostile,size,result,2,&count) && count==1;
+    memcpy(result,before,sizeof result); count=123;
+    int atomic=!mulib_elvi_scrape_parse(&program,hostile,size+1,result,2,&count) &&
+        count==123 && !memcmp(result,before,sizeof result); /* embedded NUL */
+    free(hostile);
+    if (!bounded || !parsed || !atomic || !mulib_elvi_scrape_parse(&program,NULL,0,NULL,0,&count) || count!=0) return 0;
     char host[256];
     int ok=shy_dragnet_url_host("https://example.org/search?q=hello%20world",host) && !strcmp(host,"example.org");
     static const char *const bad[]={"http://example.org/","https://localhost/","https://127.0.0.1/",

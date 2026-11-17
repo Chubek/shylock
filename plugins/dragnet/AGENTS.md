@@ -3,7 +3,7 @@
 Read the repository's `../../AGENTS.md`, `manual/dragnet.md`, `manual/intelligence.md` and
 `manual/dragnet-naive.md` before changing contracts. Work against the actual
 `third_party/mulib` checkout; currently verified revision:
-`151528b50b316aeea804ce2aebf66ef90b9e7100`. Do not change the submodule for an adapter.
+`eeb6de585303e1ea0dfd8bf2260328289b04587c`. Do not change the submodule for an adapter.
 
 ## Ownership of decisions
 
@@ -12,6 +12,10 @@ Read the repository's `../../AGENTS.md`, `manual/dragnet.md`, `manual/intelligen
   amount/conflict/consent policy in `src/dragnet_policy.on1x`, inspection scores in
   `src/dragnet_rank.on1x` and evidence assembly in `src/dragnet_evidence.on1x`.
 - `src/dragnet_naive.on1x` owns command, replay, review and fallback orchestration.
+  `src/dragnet_collection.on1x` owns offline collection links, duplicates, statuses
+  and composed review/replay. `src/ledger_pricing.on1x` owns reviewed-ledger
+  selection, freshness/coverage gates and forecast/pricing orchestration. See
+  `manual/dragnet-pricing.md`; keep these policies out of native resource adapters.
   Do not move these workflows into C or introduce a thin-wrapper architecture.
   Keep substantive new extraction code approximately 40% C11 / 60% On1x; report
   the measurement scope, excluding tests, generated code, docs and dependencies.
@@ -50,6 +54,13 @@ Read the repository's `../../AGENTS.md`, `manual/dragnet.md`, `manual/intelligen
    outcomes. No network or paid calls belong in tests.
 
 ## Verification
+
+Elvi discovery uses the upstream hardened parser and records
+`parser_profile:"dragnet.elvi/hardened-v1"` plus the actual MuLIB revision. Do not
+relabel older artifacts to make replay pass. Clamp requested limits to provider
+limits before rendering URLs or parsing; on parser failure publish no hit prefix.
+Keep the DNS-pinned curl transport independent from the optional upstream TLS
+adapter unless a separately tested transport migration is requested.
 
 Run `./build.sh -j4` and `TMPDIR=/tmp/opencode make -j4 test`. The suite includes
 `tests/naive.py`, `tests/naive.c` and `tests/naive_policy.on1x`. Run strict native

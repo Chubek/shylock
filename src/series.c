@@ -77,9 +77,16 @@ int shy_series_load(const char *path, double values[4096], size_t *count,
     size_t length;
     char *data = shy_read(path, SHY_DATA_LIMIT, &length);
     if (!data) return 0;
+    int ok=shy_series_parse(data,length,values,count,digest,lineage);
+    free(data); return ok;
+}
+int shy_series_parse(const char *data,size_t length,double values[4096],size_t *count,
+    char digest[65],mulib_json_t **lineage)
+{
+    *lineage=NULL;
+    if (length>SHY_DATA_LIMIT) return 0;
     shy_digest(data, length, digest);
     mulib_json_t *input = mulib_json_parse(data, length, NULL);
-    free(data);
     const mulib_json_t *items = input;
     int rich = mulib_json_typeof(input) == MULIB_JSON_OBJECT;
     if (rich) {

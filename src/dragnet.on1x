@@ -21,7 +21,11 @@ fn dragnet_finish(code:i64)->i64 {
   if code==2 { status="transport_error"; diagnostic="capture read, DNS policy, deadline or HTTPS transport failed"; result=2; }
   if code==3 { status="http_error"; diagnostic="provider did not return 200; redirects and retries are disabled"; result=2; }
   if code==4 { status="response_error"; diagnostic="expected bounded nonempty UTF-8 HTML"; result=2; }
-  if code==5 { status="parse_error"; diagnostic="ElviScrape could not process response"; result=2; }
+  if code==5 {
+    status="parse_error";
+    diagnostic="ElviScrape rejected response or exhausted scanner/allocation budget; no partial hits published";
+    result=2;
+  }
   if code==0 && shy_dragnet_count()==0 {
     status="no_parsed_hits";
     diagnostic="empty results, challenge or parse drift are not distinguishable from this response";
@@ -38,7 +42,12 @@ fn dragnet_discover(provider:string,query:string,capture:string,root:string,limi
   return dragnet_finish(shy_dragnet_prepare(provider,query,capture,root,limit));
 }
 fn dragnet_replay(path:string)->i64 {
-  if shy_dragnet_replay(path)!=0 { shy_dragnet_close(); return shy_error("discovery provenance/replay mismatch"); }
+  let code=shy_dragnet_replay(path);
+  if code==1 {
+    shy_dragnet_close();
+    return shy_error("discovery MuLIB revision/parser profile differs; use the original executable for exact replay or rediscover the saved response with this build");
+  }
+  if code!=0 { shy_dragnet_close(); return shy_error("discovery provenance/replay mismatch"); }
   return dragnet_finish(0);
 }
 fn dragnet_snapshot(url:string,time:i64,saved:string)->i64 {

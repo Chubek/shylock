@@ -14,6 +14,11 @@ result de-duplication and bounded parsing are MuLIB operations, not replacement
 scrapers. The Makefile's upstream helper supplies their dependency closure in
 one MuLIB implementation translation unit. No upstream files were changed.
 
+The current tested checkout is MuLIB
+`eeb6de585303e1ea0dfd8bf2260328289b04587c` (previous baseline:
+`151528b50b316aeea804ce2aebf66ef90b9e7100`). Its hardened Elvi engine is used directly;
+Shylock does not copy the old parser or implement alternative redirect heuristics.
+
 ## Discover and replay
 
 ```sh
@@ -25,7 +30,7 @@ one MuLIB implementation translation unit. No upstream files were changed.
 
 Syntax is `discover PROVIDER QUERY [SERP_HTML [LIMIT]]`. Omit the saved response,
 or use an empty string, for an explicit live request. Default limit is 10;
-accepted limits are 1..64, clamped further by the provider program (Google/Bing
+accepted limits are 1..64, clamped **before URL construction and parsing** by the provider program (Google/Bing
 currently allow 30). Provider names are bounded ASCII identifiers and must match
 the program's declared name. Queries are nonempty, <=2048 bytes, and encoded by
 MuLIB rather than interpolated into a shell. `SHY_PROVIDER_ROOT` can select a
@@ -33,7 +38,8 @@ different **trusted** provider directory; paths cannot escape it through the
 provider name. Editing an `.elvs` program changes recorded provenance.
 
 `shylock.discovery/v1` retains provider/query, constructed search URL, requested
-and effective limits, exact program source/digest, MuLIB revision, status,
+and effective limits, exact program source/digest, MuLIB revision,
+`parser_profile:"dragnet.elvi/hardened-v1"`, status,
 diagnostic, response snapshot when successfully parsed, hits and discovery ID.
 The old `provider`, `search_url`, `status` and `hits` fields remain available.
 Each hit still has exactly `url` and `title`. URLs are proposals, not permission
@@ -48,7 +54,7 @@ Outcomes are chosen by On1x:
 | `transport_error` | Saved-response read, address policy, DNS or HTTPS failure / 2 |
 | `http_error` | Non-200 response, including redirects and rate limits / 2 |
 | `response_error` | Wrong media, empty or invalid UTF-8 HTML / 2 |
-| `parse_error` | ElviScrape failed to process the bounded response / 2 |
+| `parse_error` | ElviScrape rejected the response or exhausted scanner/allocation budget; no partial hits / 2 |
 
 An invalid program/query or an allocation/publication failure may instead return
 2 without an artifact. Zero hits cannot alone distinguish truly empty results,
@@ -63,6 +69,38 @@ be replayed. Replaying does not refetch. IDs detect inconsistency, not forgery:
 they are unkeyed hashes, not signatures, authenticated times or server proofs.
 Search captures have `captured_at:null` because this command receives no asserted
 capture timestamp; it does not falsely stamp saved bytes with today's time.
+
+Exact replay additionally requires the recorded MuLIB revision and parser profile
+to match this executable. An older/missing profile or different revision yields an
+explicit incompatibility diagnostic and exit 2, rather than silently relabeling old
+results with a new parser. Keep the original executable to verify old artifacts.
+Alternatively, preserve those artifacts and rediscover their saved HTML with this
+build (and the applicable trusted provider program) to produce a new discovery ID.
+
+### Hardened Elvi parsing
+
+The upstream scanner filters nested templates, script/style, textarea/title/xmp,
+iframe/noembed/noframes/noscript fallback content, comments and declarations;
+`plaintext` ends markup scanning. Malformed headings cannot leak heading context
+into unrelated links. Literal and entity-encoded NBSP normalize consistently, and
+title clipping stops on UTF-8 boundaries, including decoded Unicode references.
+
+Google redirect wrappers must have exactly one nonempty `q=` or `url=` target
+before the fragment. Ambiguous targets, malformed escapes anywhere in the wrapper,
+and invalid numeric character references in URL attributes are rejected. Request
+home/search URLs cannot contain fragments; a literal `#` in a query is encoded.
+Result de-duplication remains by exact destination URL bytes.
+
+Parsing stages at most the effective result limit (<=64) and one HTML copy.
+Scanner work is bounded upstream to `16 * response_bytes + 1024`; allocation or
+work exhaustion cannot publish an earlier valid-hit prefix. On1x reports the
+generic `parse_error`, since MuLIB's Boolean API does not distinguish its cause.
+Parsing may stop once the requested hit capacity is filled; it does not promise
+to inspect the entire remainder of a response after that point. A failed provider
+does not discard another provider's valid results in `discover-many`.
+
+These are bounded lexical HTML rules, not full HTML5 tree construction or computed
+CSS visibility. Offline tests do not establish live provider availability.
 
 ## Multiple providers
 
@@ -83,6 +121,10 @@ individual successful result, save its object and use `discover-replay`.
 
 No automatic listing fetch follows discovery. This keeps acquisition consent,
 listing selection and processing separate.
+
+To join selected hits to saved snapshots and move reviewed evidence into pricing,
+see the offline [collection and ledger pricing workflows](dragnet-pricing.md).
+Collections do not fetch discovered URLs.
 
 ## Immutable listing snapshots
 
@@ -133,6 +175,8 @@ Live search, raw capture and snapshots share one bounded transport:
 `curl`, PATH, CA configuration and native plugins are trusted local application
 inputs. TLS remains curl's implementation; this does not claim to use MuLIB's
 TLS handshake adapter. MuLIB ElviScrape/fetch policy and parsing remain canonical.
+The upstream upgrade also hardens its optional HTTPS adapter's HTTP metadata and
+buffer accounting; that adapter is **not** selected by Shylock's search transport.
 The C embedding header exposes a trusted injected transport/resolver interface
 for deterministic tests; **no environment switch disables DNS checks** in the CLI.
 The built-in resolver checks IPv4 only because the live transport forces IPv4.
@@ -195,6 +239,11 @@ admission, multi-provider partial results, provenance/replay tampering, snapshot
 equivalence, structured and split-markup extraction, locale and unresolved symbols,
 dynamic SDK transactions, injected DNS/transport failure and bounded child cleanup.
 Allocation-failure tests cover response/batch ownership and failed publication.
+They also verify unchanged caller results/count when either staged Elvi parser
+allocation fails. CLI tests exercise the upstream inert/redirect/heading fixtures,
+UTF-8 titles, bounded malformed HTML, effective limits and revision-aware replay.
+Native tests additionally exercise scanner-work exhaustion directly and ensure
+adapter parse-allocation failures never expose a hit prefix.
 The suite requires no public DNS, internet, model key or live provider consent.
 Live-provider behavior is separate; successful offline fixtures do not prove
 current Google/Bing availability, provider permission or markup compatibility.

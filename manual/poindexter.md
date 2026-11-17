@@ -1,6 +1,8 @@
 # Poindexter: evidence, review and cohorts
 
 Poindexter is Shylock's local evidence ledger, not approved accounting software.
+For collection-aware review and direct forecast/pricing from current review heads,
+see [Dragnet pricing integration](dragnet-pricing.md).
 It uses MuLIB KVDB at revision `151528b50b316aeea804ce2aebf66ef90b9e7100`.
 On1x owns admission, review orchestration and cohort comparability. C11 adapters
 own JSON trees, immutable byte snapshots and database handles. An exclusive

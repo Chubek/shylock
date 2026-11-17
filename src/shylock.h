@@ -64,6 +64,8 @@ int shy_verify_capture(const mulib_json_t *record, const char *html, size_t leng
 /* Numeric samples are copied; lineage, when present, is caller-owned. */
 int shy_series_load(const char *path, double values[4096], size_t *count,
     char digest[65], mulib_json_t **lineage);
+int shy_series_parse(const char *data,size_t length,double values[4096],size_t *count,
+    char digest[65],mulib_json_t **lineage);
 mulib_json_t *shy_estimator(void);
 /* Borrows an already validated demand artifact for the duration of the call. */
 int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,

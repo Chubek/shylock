@@ -2,9 +2,11 @@
 #include "../../src/shylock.h"
 #include "../../src/extensions.h"
 #include "../../src/poindexter.h"
+#include "../../src/engine.h"
 #include "mulib-kvdb.h"
 #include "mulib-money.h"
 #include "../dragnet/naive.h"
+#include "../dragnet/collection.h"
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,6 +16,7 @@
 
 enum { MAX_ROWS = 16384 };
 static mulib_json_t *capture, *context, *resolved, *selected, *revision_base;
+static mulib_json_t *collection_link;
 static mulib_kvdb_t *db;
 static char *snapshot;
 static size_t snapshot_length;
@@ -31,6 +34,7 @@ int64_t shy_store_close(void)
     mulib_json_destroy(resolved); resolved = NULL;
     mulib_json_destroy(selected); selected = NULL;
     mulib_json_destroy(revision_base); revision_base = NULL;
+    mulib_json_destroy(collection_link); collection_link=NULL;
     free(snapshot); snapshot = NULL; snapshot_length = 0; verified = 0;
     mulib_kvdb_close(db); db = NULL;
     if (lock_fd >= 0) { close(lock_fd); lock_fd = -1; }
@@ -211,12 +215,56 @@ static int put_immutable(const char *key, const void *value, size_t length)
     if (rc != MULIB_KVDB_ENOTFOUND) return 2;
     return mulib_kvdb_set(db, key, strlen(key), value, length) == MULIB_KVDB_OK ? 0 : 2;
 }
+/* JSON identities are canonical, unlike exact snapshot bytes. Preserve the
+   first stored representation without treating key order as a conflicting claim. */
+static int put_json_immutable(const char *key,const mulib_json_t *record)
+{
+    const void *value; size_t n; char a[65],b[65];
+    int rc=mulib_kvdb_get(db,key,strlen(key),&value,&n);
+    if (rc==MULIB_KVDB_OK) {
+        mulib_json_t *old=mulib_json_parse(value,n,NULL);
+        int ok=old && shy_json_digest(old,NULL,a) && shy_json_digest(record,NULL,b);
+        mulib_json_destroy(old); return !ok ? 2 : strcmp(a,b) ? 3 : 0;
+    }
+    if (rc!=MULIB_KVDB_ENOTFOUND) return 2;
+    char *text=mulib_json_stringify(record,0);
+    rc=text ? put_immutable(key,text,strlen(text)) : 2; free(text); return rc;
+}
+
+int64_t shy_review_collection(int64_t index)
+{
+    const mulib_json_t *bundle=shy_collection_verified();
+    const mulib_json_t *entry=index<0 ? NULL : mulib_json_at(mulib_json_get(bundle,"entries"),(size_t)index);
+    if (!db || !entry || !verified || !shy_json_equal(capture,mulib_json_get(entry,"extraction"))) return 0;
+    mulib_json_destroy(collection_link); collection_link=mulib_json_new(MULIB_JSON_OBJECT);
+    /* Duplicate entries share their first source's lineage and cannot manufacture
+       a second observation or change the meaning of an idempotent retry. */
+    int64_t first=shy_integer(entry,"duplicate_of",7);
+    if (first>=0) { index=first; entry=mulib_json_at(mulib_json_get(bundle,"entries"),(size_t)index); }
+    const mulib_json_t *extraction=mulib_json_get(entry,"extraction");
+    if (!shy_add(collection_link,"collection_id",mulib_json_string(shy_text(bundle,"collection_id"))) ||
+        !shy_add(collection_link,"entry",mulib_json_number((double)index)) ||
+        !shy_add(collection_link,"discovery_id",shy_clone(mulib_json_get(entry,"discovery_id"))) ||
+        !shy_add(collection_link,"hit",shy_clone(mulib_json_get(entry,"hit"))) ||
+        !shy_add(collection_link,"find_id",mulib_json_string(shy_text(extraction,"find_id")))) return 0;
+    char key[96]; snprintf(key,sizeof key,"collection/%s",shy_text(bundle,"collection_id"));
+    return !put_json_immutable(key,bundle);
+}
 
 static mulib_json_t *get_json(const void *key, size_t length)
 {
     const void *value; size_t n;
     return mulib_kvdb_get(db, key, length, &value, &n) == MULIB_KVDB_OK ?
         mulib_json_parse(value, n, NULL) : NULL;
+}
+int64_t shy_store_collection_begin(const char *id)
+{
+    if (!db || !hash_valid(id)) return 0;
+    char key[96],digest[65]; snprintf(key,sizeof key,"collection/%s",id);
+    mulib_json_t *record=get_json(key,strlen(key));
+    int ok=record && shy_json_digest(record,"collection_id",digest) && !strcmp(id,digest) &&
+        shy_collection_begin_record(record);
+    mulib_json_destroy(record); return ok;
 }
 
 static int review_valid(const mulib_json_t *row)
@@ -351,14 +399,13 @@ int64_t shy_review_save(int64_t index, const char *cohort, const char *reviewer,
         shy_add(row, "extraction_id", mulib_json_string(extraction_id)) &&
         shy_add(row, "candidate_index", mulib_json_number((double)index)) && identify_context(row);
     int rc = 2;
+    if (ok && collection_link) ok=shy_add(row,"collection",shy_clone(collection_link));
     if (ok && verified) {
         char key[96];
         snprintf(key, sizeof key, "snapshot/%s", shy_text(capture, "blake3"));
         rc = put_immutable(key, snapshot, snapshot_length);
-        char *encoded = mulib_json_stringify(capture, 0);
         snprintf(key, sizeof key, "extraction/%s", extraction_id);
-        if (!rc) rc = encoded ? put_immutable(key, encoded, strlen(encoded)) : 2;
-        free(encoded);
+        if (!rc) rc = put_json_immutable(key,capture);
         if (!rc) rc = save_revision(row, "");
     } else if (ok) rc = save_revision(row, "");
     mulib_json_destroy(row);
@@ -592,8 +639,8 @@ static int64_t conflict(const sample *samples, size_t begin, size_t end)
     return shy_emit(out) ? 2 : 3;
 }
 
-int64_t shy_store_series(const char *cohort, const char *currency, int64_t start,
-    int64_t step, int64_t count, int64_t rich)
+static int64_t store_series(const char *cohort, const char *currency, int64_t start,
+    int64_t step, int64_t count, int64_t rich,int into_engine)
 {
     if (!db || !selected || !*cohort || shy_currency_scale(currency) < 0 || start < 0 ||
         start > INT64_C(253402300799) || step < 1 || count < 2 || count > 4096 ||
@@ -655,6 +702,7 @@ int64_t shy_store_series(const char *cohort, const char *currency, int64_t start
             ok = ok && shy_add(ref, "listing_id", mulib_json_string(shy_text(row, "listing_id"))) &&
                 shy_add(ref, "captured_at", shy_clone(mulib_json_get(row, "captured_at"))) &&
                 shy_add(ref, "minor", mulib_json_number((double)samples[j].minor));
+            if (ok && mulib_json_get(row,"collection")) ok=shy_add(ref,"collection",shy_clone(mulib_json_get(row,"collection")));
             if (!ok) mulib_json_destroy(ref);
             else ok = shy_push(refs, ref);
         }
@@ -691,7 +739,15 @@ int64_t shy_store_series(const char *cohort, const char *currency, int64_t start
     buckets = NULL;
     char digest[65];
     if (!shy_json_digest(out, NULL, digest) || !shy_add(out, "cohort_id", mulib_json_string(digest))) goto fail;
+    if (into_engine) {
+        int64_t loaded=shy_engine_open_record(out); mulib_json_destroy(out);
+        return loaded<0 ? 2 : 0;
+    }
     return shy_emit(out);
 fail:
     free(samples); mulib_json_destroy(out); mulib_json_destroy(values); mulib_json_destroy(buckets); return 2;
 }
+int64_t shy_store_series(const char *cohort,const char *currency,int64_t start,int64_t step,int64_t count,int64_t rich)
+{ return store_series(cohort,currency,start,step,count,rich,0); }
+int64_t shy_store_cohort_engine(const char *cohort,const char *currency,int64_t start,int64_t step,int64_t count)
+{ return store_series(cohort,currency,start,step,count,1,1); }

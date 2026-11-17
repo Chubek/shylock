@@ -5,6 +5,11 @@ selection and holdout evaluation, empirical error bands, scenario-risk demand
 optimization, guarded forecast/formula/demand decisions and checked tax/fee quotes.
 These are offline proposals, never automatic rate publication or booking truth.
 
+To connect Dragnet discoveries and reviewed evidence directly, see
+[collections and ledger pricing](dragnet-pricing.md): `forecast-ledger` and
+`price-ledger` share the existing engine/policies while enforcing explicit
+selection freshness and coverage before forecasting or recommending.
+
 ```sh
 ./shylock forecast tests/fixtures/series.json policies/forecast.json
 ./shylock forecast tests/fixtures/seasonal-history.json policies/seasonal.json

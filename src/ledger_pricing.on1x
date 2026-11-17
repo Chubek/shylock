@@ -1,0 +1,115 @@
+extern fn shy_store_cohort_engine(cohort:string,currency:string,start:i64,step:i64,count:i64)->i64;
+extern fn shy_engine_selection(audit:string)->i64;
+extern fn shy_engine_bucket_number(bucket:i64,evidence:i64,key:string)->i64;
+
+# Asking-price evidence describes supply, never booking demand. This selection
+# contract adds explicit data-quality gates, not an automatic evidence reviewer.
+fn ledger_selection_valid()->bool {
+  if !@fields("closed","",-1,"schema:string","cohort:string","currency:string","start:integer","step:integer",
+    "count:integer","as_of:integer","max_age_seconds:integer","minimum_listings:integer") ||
+    shy_document_text("",-1,"schema")!="shylock.ledger-selection/v1" { return false; }
+  let cohort=shy_document_text("",-1,"cohort");
+  let currency=shy_document_text("",-1,"currency");
+  let start=shy_document_number("",-1,"start");
+  let step=shy_document_number("",-1,"step");
+  let count=shy_document_number("",-1,"count");
+  let as_of=shy_document_number("",-1,"as_of");
+  let age=shy_document_number("",-1,"max_age_seconds");
+  let listings=shy_document_number("",-1,"minimum_listings");
+  if !cohort_interval_valid(cohort,currency,start,step,count) || as_of>253402300799 ||
+    age>253402300799 || listings<1 || listings>16384 { return false; }
+  # Only complete buckets are eligible; a partial current interval must not be
+  # silently compared with fully observed historical intervals.
+  return start+step*count-1<=as_of;
+}
+fn ledger_selection_options()->sexpr {
+  var row=sx_nil();
+  row=nf_put(row,"cohort",shy_document_text("",-1,"cohort"));
+  row=nf_put(row,"currency",shy_document_text("",-1,"currency"));
+  row=nf_put(row,"start",nf_integer(shy_document_number("",-1,"start")));
+  row=nf_put(row,"step",nf_integer(shy_document_number("",-1,"step")));
+  row=nf_put(row,"count",nf_integer(shy_document_number("",-1,"count")));
+  row=nf_put(row,"as_of",nf_integer(shy_document_number("",-1,"as_of")));
+  row=nf_put(row,"age",nf_integer(shy_document_number("",-1,"max_age_seconds")));
+  row=nf_put(row,"minimum",nf_integer(shy_document_number("",-1,"minimum_listings")));
+  row=nf_put(row,"json",shy_document_json()); return row;
+}
+fn ledger_selection_audit(options:sexpr,minimum:i64,oldest:i64,latest:i64)->string {
+  let out=buffer_new();
+  buffer_append(out,"{\"schema\":\"shylock.ledger-admission/v1\",\"selection\":");
+  buffer_append(out,nf_get(options,"json"));
+  buffer_append(out,",\"policy\":\"reviewed-complete-fresh-cohort/v1\",\"minimum_observed_listings\":");
+  buffer_append(out,nf_integer(minimum));
+  buffer_append(out,",\"oldest_latest_bucket_capture\":"); buffer_append(out,nf_integer(oldest));
+  buffer_append(out,",\"latest_capture\":"); buffer_append(out,nf_integer(latest));
+  buffer_append(out,",\"series_digest_encoding\":\"compact-json/v1\",\"evidence_kind\":\"supply-side-asking-quotes\"}");
+  return buffer_text(out);
+}
+fn ledger_quality(options:sexpr)->bool {
+  let count=nf_number(options,"count");
+  let minimum=nf_number(options,"minimum");
+  let as_of=nf_number(options,"as_of");
+  let age=nf_number(options,"age");
+  var observed=16385; var latest=0; var oldest=253402300800; var i=0;
+  while i<count {
+    let distinct=shy_engine_bucket_number(i,-1,"distinct_listings");
+    if distinct<minimum { shy_error("ledger coverage gate failed: too few distinct reviewed listings in a bucket"); return false; }
+    if distinct<observed { observed=distinct; }
+    let refs=shy_engine_bucket_number(i,-1,"evidence_count");
+    if refs<distinct || refs>16384 { return false; }
+    var j=0;
+    while j<refs {
+      let time=shy_engine_bucket_number(i,j,"captured_at");
+      if time<0 || time>as_of { shy_error("ledger selection contains future or invalid captures"); return false; }
+      if time>latest { latest=time; }
+      if i==count-1 {
+        if time<oldest { oldest=time; }
+        # All retained representations must satisfy freshness, not just one
+        # unusually recent listing. Historical training buckets are exempt.
+        if as_of-time>age { shy_error("ledger freshness gate failed for latest bucket"); return false; }
+      }
+      j=j+1;
+    }
+    i=i+1;
+  }
+  return shy_engine_selection(ledger_selection_audit(options,observed,oldest,latest))==1;
+}
+fn ledger_engine_open(database:string,options:sexpr)->i64 {
+  let cohort=nf_get(options,"cohort"); let currency=nf_get(options,"currency");
+  let start=nf_number(options,"start"); let step=nf_number(options,"step"); let count=nf_number(options,"count");
+  if shy_store_open(database)!=1 { return 2; }
+  var status=cohort_admit(cohort,currency,start,step,count,1);
+  if status==0 { status=shy_store_cohort_engine(cohort,currency,start,step,count); }
+  # The engine owns a validated immutable copy. No formula, event, model or
+  # demand processing runs while the KVDB writer lock remains held.
+  shy_store_close(); return status;
+}
+fn price_ledger(database:string,selection:string,policy:string,demand:string)->i64 {
+  if shy_document_open(selection)!=1 { return shy_error("cannot read ledger selection"); }
+  if !ledger_selection_valid() { shy_document_close(); return shy_error("invalid ledger selection or incomplete/future interval"); }
+  let options=ledger_selection_options(); shy_document_close();
+  let admitted=ledger_engine_open(database,options);
+  if admitted!=0 { shy_engine_close(); return admitted; }
+  if !ledger_quality(options) { shy_engine_close(); return 2; }
+  if shy_document_open(policy)!=1 { shy_engine_close(); return shy_error("cannot read pricing policy"); }
+  if shy_document_number("",-1,"as_of")!=nf_number(options,"as_of") {
+    shy_document_close(); shy_engine_close(); return shy_error("selection and pricing policy must use the same as_of cutoff");
+  }
+  let status=price_run(policy,nf_number(options,"count"),demand);
+  shy_document_close(); shy_engine_close(); return status;
+}
+fn forecast_ledger(database:string,selection:string,policy:string)->i64 {
+  if shy_document_open(selection)!=1 { return shy_error("cannot read ledger selection"); }
+  if !ledger_selection_valid() { shy_document_close(); return shy_error("invalid ledger selection or incomplete/future interval"); }
+  let options=ledger_selection_options(); shy_document_close();
+  let admitted=ledger_engine_open(database,options);
+  if admitted!=0 { shy_engine_close(); return admitted; }
+  if !ledger_quality(options) { shy_engine_close(); return 2; }
+  if shy_document_open(policy)!=1 { shy_engine_close(); return shy_error("cannot read forecast policy"); }
+  let status=forecast_run(nf_number(options,"count"));
+  shy_document_close();
+  # The existing evaluated-forecast contract preserves model errors and observed
+  # coverage; a ledger selection is not permission to invent demand or a price.
+  let published=shy_engine_emit(); shy_engine_close();
+  if published!=0 { return published; } return status;
+}

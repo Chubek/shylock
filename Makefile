@@ -48,10 +48,14 @@ $(BUILD)/on1xc: $(OBJECTS)
 KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex readability browser-engine browserlocator dom-query openai-client regex scrape-rule
 VM_NATIVE := src/record.c src/mune_vm.c src/sandbox.c src/sandbox_os.c
 NAIVE_NATIVE := plugins/dragnet/naive.c plugins/dragnet/naive-dom.c plugins/dragnet/naive-regex.c plugins/dragnet/naive-money.c plugins/dragnet/naive-span.c
-INTELLIGENCE_NATIVE := plugins/dragnet/flat.c plugins/dragnet/browser.c plugins/dragnet/openai.c plugins/dragnet/openai_tls.c $(NAIVE_NATIVE)
+INTELLIGENCE_NATIVE := plugins/dragnet/flat.c plugins/dragnet/browser.c plugins/dragnet/openai.c plugins/dragnet/openai_tls.c plugins/dragnet/collection.c $(NAIVE_NATIVE)
 NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/document.c src/engine.c src/context.c src/latex.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c $(INTELLIGENCE_NATIVE) $(VM_NATIVE)
 HEADERS := src/shylock.h include/shylock-sdk.h plugins/dragnet/dragnet.h plugins/dragnet/workflow.h plugins/dragnet/intelligence.h src/document.h src/engine.h src/latex.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
 HEADERS += plugins/dragnet/naive.h plugins/dragnet/naive-rules.h
+HEADERS += plugins/dragnet/collection.h
+# Elvi's shared scanner is part of its implementation contract. Rebuild the
+# generated one-TU kernel closure even when a checkout edits these in place.
+HEADERS += $(MULIB)/include/mulib-elvi-scrape.h $(MULIB)/include/detail/mulib-webscan.h
 $(BUILD)/native-config.json: FORCE tools/native_config.py
 	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(GUI_FLAGS) $(OPENAI_TLS_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)"
 
@@ -114,6 +118,7 @@ DRAGNET_NATIVE := plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/d
 $(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c $(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" --mulib json --mulib cryptohash --mulib latex \
+	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
 	  --mulib money --mulib histprice --mulib statsprice --mulib priceopt \
 	  --mulib elvi-scrape --mulib html-jsonld --mulib html-tokenizer --cflag=-ldl \
 	  --mulib readability --mulib browser-engine --mulib browserlocator --mulib dom-query --mulib openai-client --mulib regex --mulib scrape-rule \
@@ -133,6 +138,7 @@ test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/me
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/dragnet.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/intelligence.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/naive.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/collection.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/extensions.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/calculation.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/reports.py
@@ -140,7 +146,7 @@ test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/me
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/sandbox.py
 	SDL_VIDEODRIVER=dummy "$(BUILD)/native-tests"
 	$(PYTHON) tests/metaprogramming.py "$(ON1XC)" "$(BUILD)/ppx-fields" "$(ON1X)" "$(BUILD)/metaprogramming-tests"
-	$(PYTHON) tests/document_alloc.py "$(BUILD)/document-allocation-tests"
+	$(PYTHON) tests/document_alloc.py "$(BUILD)/document-allocation-tests" "$(BUILD)/shylock"
 
 clean:
 	rm -rf "$(BUILD)"

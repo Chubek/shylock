@@ -2,7 +2,7 @@
 
 NaiveFinder extends Dragnet, without replacing its existing extractor, snapshots,
 IR, transport, native SDK or model grounding checks. It uses the actual MuLIB
-revision `151528b50b316aeea804ce2aebf66ef90b9e7100`, without upstream patches or new
+revision `eeb6de585303e1ea0dfd8bf2260328289b04587c`, without upstream patches or new
 external dependencies. All matching commands below are offline.
 
 ```sh

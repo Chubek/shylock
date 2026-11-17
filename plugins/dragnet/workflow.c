@@ -58,7 +58,9 @@ static int prepare(const char *provider,const char *query,const char *program_so
     mulib_elvi_scrape_error_t error={0};
     char url[4096],digest[65];
     if (!mulib_elvi_scrape_compile(program_source,strlen(program_source),&program,&error) ||
-        strcmp(program.name,provider) || !mulib_elvi_scrape_url(&program,query,(unsigned)limit,url,sizeof url)) return 1;
+        strcmp(program.name,provider)) return 1;
+    unsigned effective=(unsigned)limit<program.max_results ? (unsigned)limit : program.max_results;
+    if (!mulib_elvi_scrape_url(&program,query,effective,url,sizeof url)) return 1;
     shy_digest(program_source,strlen(program_source),digest);
     mulib_json_t *out=mulib_json_new(MULIB_JSON_OBJECT),*hits=mulib_json_new(MULIB_JSON_ARRAY);
     int code=0;
@@ -67,15 +69,21 @@ static int prepare(const char *provider,const char *query,const char *program_so
     else if (!shy_dragnet_html_type(type) || !length || memchr(bytes,0,length) ||
         !mulib_utf8_validate((const unsigned char *)bytes,length)) code=4;
     mulib_elvi_scrape_result_t results[64]; size_t count=0;
-    if (!code && !mulib_elvi_scrape_parse(&program,bytes,length,results,(size_t)limit,&count)) code=5;
+    if (!code && !mulib_elvi_scrape_parse(&program,bytes,length,results,effective,&count)) {
+        /* Upstream stages results/count transactionally. Never publish a
+           prefix after scanner-budget or allocation failure, even if an older
+           adapter/kernel left a count behind. */
+        count=0; code=5;
+    }
     int ok=out && hits && shy_add(out,"schema",mulib_json_string("shylock.discovery/v1")) &&
         shy_add(out,"provider",mulib_json_string(provider)) && shy_add(out,"query",mulib_json_string(query)) &&
         shy_add(out,"search_url",mulib_json_string(url)) &&
         shy_add(out,"provider_source",mulib_json_string(program_source)) &&
         shy_add(out,"provider_blake3",mulib_json_string(digest)) &&
         shy_add(out,"mulib_revision",mulib_json_string(SHY_MULIB_REVISION)) &&
+        shy_add(out,"parser_profile",mulib_json_string(SHY_ELVI_PROFILE)) &&
         shy_add(out,"requested_limit",mulib_json_number((double)limit)) &&
-        shy_add(out,"effective_limit",mulib_json_number((double)((unsigned)limit<program.max_results ? (unsigned)limit : program.max_results))) &&
+        shy_add(out,"effective_limit",mulib_json_number(effective)) &&
         shy_add(out,"http_status",status ? mulib_json_number(status) : mulib_json_new(MULIB_JSON_NULL)) &&
         shy_add(out,"error_code",mulib_json_number(code));
     if (ok) ok=shy_add(out,"snapshot",!code ? shy_snapshot_record(bytes,length,url,-1,mode,status,type) : mulib_json_new(MULIB_JSON_NULL));
@@ -100,7 +108,9 @@ int64_t shy_dragnet_prepare(const char *provider,const char *query,const char *c
     char *source=n>0 && (size_t)n<sizeof path ? shy_read(path,65536,&length) : NULL;
     mulib_elvi_scrape_program_t program;
     if (!source || !mulib_elvi_scrape_compile(source,strlen(source),&program,NULL) ||
-        strcmp(program.name,provider) || !mulib_elvi_scrape_url(&program,query,(unsigned)limit,url,sizeof url)) { free(source); return 1; }
+        strcmp(program.name,provider)) { free(source); return 1; }
+    unsigned effective=(unsigned)limit<program.max_results ? (unsigned)limit : program.max_results;
+    if (!mulib_elvi_scrape_url(&program,query,effective,url,sizeof url)) { free(source); return 1; }
     mulib_shylock_buffer_t body={0}; char type[128]="text/html"; unsigned status=0;
     char *saved=NULL; const char *bytes=NULL; length=0;
     if (*capture) bytes=saved=shy_read(capture,SHY_PAGE_LIMIT,&length);
@@ -155,11 +165,15 @@ int64_t shy_dragnet_batch_finish(const char *status)
     if (!seal(batch,"batch_id")) { shy_dragnet_batch_close(); return shy_error("cannot identify discovery batch"); }
     mulib_json_t *out=batch; batch=NULL; return shy_emit(out);
 }
-int64_t shy_dragnet_publish(const char *status,const char *diagnostic)
+int shy_dragnet_check(const char *status,const char *diagnostic)
 {
     if (!discovery || !shy_add(discovery,"status",mulib_json_string(status)) ||
-        !shy_add(discovery,"diagnostic",mulib_json_string(diagnostic)) || !seal(discovery,"discovery_id")) return shy_error("cannot allocate discovery record");
-    if (expected && !shy_json_equal(discovery,expected)) return shy_error("discovery replay disagrees with retained provenance/outcome");
+        !shy_add(discovery,"diagnostic",mulib_json_string(diagnostic)) || !seal(discovery,"discovery_id")) return 0;
+    return !expected || shy_json_equal(discovery,expected);
+}
+int64_t shy_dragnet_publish(const char *status,const char *diagnostic)
+{
+    if (!shy_dragnet_check(status,diagnostic)) return shy_error("discovery replay/allocation disagrees with retained provenance/outcome");
     mulib_json_t *out=discovery; discovery=NULL;
     return batch ? (batch_push(out) ? 0 : 2) : shy_emit(out);
 }
@@ -205,8 +219,20 @@ int64_t shy_dragnet_replay(const char *path)
     shy_dragnet_close(); size_t length;
     char *bytes=shy_read(path,SHY_DATA_LIMIT,&length);
     mulib_json_t *record=bytes ? mulib_json_parse(bytes,length,NULL) : NULL; free(bytes);
+    int code=record ? shy_dragnet_replay_record(record) : -1;
+    mulib_json_destroy(record); return code;
+}
+int shy_dragnet_replay_record(const mulib_json_t *input)
+{
+    mulib_json_t *record=shy_clone(input);
+    shy_dragnet_close();
     const mulib_json_t *snapshot=mulib_json_get(record,"snapshot");
-    if (!shy_snapshot_valid(snapshot) || shy_integer(record,"error_code",5)!=0) { mulib_json_destroy(record); return -1; }
+    if (strcmp(shy_text(record,"schema"),"shylock.discovery/v1") ||
+        !shy_snapshot_valid(snapshot) || shy_integer(record,"error_code",5)!=0) { mulib_json_destroy(record); return -1; }
+    if (strcmp(shy_text(record,"mulib_revision"),SHY_MULIB_REVISION) ||
+        strcmp(shy_text(record,"parser_profile"),SHY_ELVI_PROFILE)) {
+        mulib_json_destroy(record); return 1;
+    }
     int64_t limit=shy_integer(record,"requested_limit",64);
     int code=limit>=1 ? prepare(shy_text(record,"provider"),shy_text(record,"query"),shy_text(record,"provider_source"),
         shy_text(snapshot,"html"),strlen(shy_text(snapshot,"html")),shy_text(snapshot,"acquisition"),

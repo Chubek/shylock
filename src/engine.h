@@ -5,6 +5,11 @@
    policy/candidate JSON is copied on entry. All string views borrow the session.
    Close releases every candidate, fold, snapshot and decision, even on failure. */
 int64_t shy_engine_open(const char *series);
+/* Borrows input for the call; owns a validated copy. Uses compact JSON bytes
+   for series_blake3 when the source is an in-memory ledger cohort. */
+int64_t shy_engine_open_record(const mulib_json_t *);
+int64_t shy_engine_selection(const char *audit);
+int64_t shy_engine_bucket_number(int64_t bucket,int64_t evidence,const char *key);
 int64_t shy_engine_close(void);
 int64_t shy_engine_policy(const char *policy);
 int64_t shy_engine_candidate(const char *candidate);

@@ -25,7 +25,7 @@ static struct {
     size_t count, models, window;
     int failed;
     char digest[65];
-    mulib_json_t *lineage, *policy, *forecast, *pricing, *demand, *optimization;
+    mulib_json_t *lineage, *policy, *forecast, *pricing, *demand, *optimization, *selection;
     candidate candidates[MAX_MODELS];
 } engine;
 
@@ -39,6 +39,7 @@ int64_t shy_engine_close(void)
     mulib_json_destroy(engine.lineage); mulib_json_destroy(engine.policy);
     mulib_json_destroy(engine.forecast); mulib_json_destroy(engine.pricing);
     mulib_json_destroy(engine.demand); mulib_json_destroy(engine.optimization);
+    mulib_json_destroy(engine.selection);
     memset(&engine, 0, sizeof engine); engine.point = -1; return 0;
 }
 
@@ -47,6 +48,27 @@ int64_t shy_engine_open(const char *path)
     shy_engine_close(); engine.point = -1;
     if (!shy_series_load(path, engine.values, &engine.count, engine.digest, &engine.lineage)) return -1;
     return (int64_t)engine.count;
+}
+int64_t shy_engine_open_record(const mulib_json_t *record)
+{
+    char *s=record ? mulib_json_stringify(record,0) : NULL;
+    shy_engine_close();
+    int ok=s && shy_series_parse(s,strlen(s),engine.values,&engine.count,engine.digest,&engine.lineage);
+    free(s); return ok ? (int64_t)engine.count : -1;
+}
+int64_t shy_engine_selection(const char *audit)
+{
+    mulib_json_destroy(engine.selection);
+    engine.selection=strlen(audit)<=65536 ? mulib_json_parse(audit,strlen(audit),NULL) : NULL;
+    return engine.selection!=NULL;
+}
+int64_t shy_engine_bucket_number(int64_t bucket,int64_t evidence,const char *key)
+{
+    if (bucket<0) return -1;
+    const mulib_json_t *row=mulib_json_at(mulib_json_get(engine.lineage,"buckets"),(size_t)bucket);
+    if (evidence>=0) row=mulib_json_at(mulib_json_get(row,"evidence"),(size_t)evidence);
+    if (!strcmp(key,"evidence_count")) return (int64_t)mulib_json_size(mulib_json_get(row,"evidence"));
+    return shy_integer(row,key,INT64_C(1000000000000));
 }
 
 static mulib_json_t *parse_text(const char *text)
@@ -239,6 +261,7 @@ int64_t shy_engine_finish(int64_t selected, int64_t horizon, int64_t rank, int64
     if (!mulib_json_set(out, "candidates", models)) goto fail;
     models = NULL;
     if (engine.lineage && !shy_add(out, "cohort_lineage", shy_clone(engine.lineage))) goto fail;
+    if (engine.selection && !shy_add(out,"ledger_selection",shy_clone(engine.selection))) goto fail;
     if (!seal(out, "forecast_id")) goto fail;
     mulib_json_destroy(engine.forecast); engine.forecast = out;
     return ok ? 0 : 2;
