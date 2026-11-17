@@ -55,7 +55,8 @@ with tempfile.TemporaryDirectory(prefix="shylock-worksheet-") as directory:
     initial = run("sheet", db, "cottages")
     assert initial["schema"] == "shylock.worksheet/v1" and len(initial["rows"]) == 2
     assert {col["key"] for col in initial["columns"] if col["editable"]} == {
-        "listing_id", "stay_start", "stay_end", "guests", "taxes", "fees", "decision"}
+        "listing_id", "stay_start", "stay_end", "guests", "taxes", "fees", "decision",
+        "currency", "basis", "qualifier", "conflict_resolution"}
 
     reports = []
     for backend in ("tui", "gui"):

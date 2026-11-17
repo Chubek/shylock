@@ -188,8 +188,7 @@ int64_t shy_review_prepare(int64_t index)
 {
     mulib_json_destroy(resolved);
     resolved = shy_clone(candidate(index));
-    if (resolved && !strcmp(shy_text(capture,"schema"),"shylock.naive-find/v1") &&
-        !shy_add(resolved,"evidence",shy_clone(candidate(index)))) return 0;
+    if (resolved && !shy_add(resolved,"evidence",shy_clone(candidate(index)))) return 0;
     return resolved && merge_context(resolved);
 }
 

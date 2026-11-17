@@ -11,7 +11,11 @@ typedef struct {
 int shy_ui_key(shy_ui_event *event, const char *key, const char *text);
 const char *shy_ui_prompt(void);
 const char *shy_ui_editor(void);
-int shy_ui_editing(void);
+int64_t shy_ui_editing(void);
+int64_t shy_ui_cancel_editor(void);
+int64_t shy_ui_script_begin(const char *path);
+const char *shy_ui_script_json(void);
+int64_t shy_ui_script_admit(void);
 int shy_tui_open(int scripted);
 int shy_tui_render(void);
 int shy_tui_next(shy_ui_event *event);

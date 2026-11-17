@@ -7,12 +7,14 @@
 
 static mulib_json_t *script, *results;
 static size_t event_index, frames;
-static int graphical, scripted, action_failures, editor_mode, opened;
+static int graphical, scripted, action_failures, editor_mode, editor_error, opened, script_ready;
 static char editor[1025];
 static shy_ui_event current;
 static char *frame_path;
+static char *script_json;
 
-int shy_ui_editing(void) { return editor_mode != 0; }
+int64_t shy_ui_editing(void) { return editor_mode != 0; }
+int64_t shy_ui_cancel_editor(void) { editor_mode=editor_error=0; *editor=0; return 0; }
 const char *shy_ui_editor(void) { return editor; }
 const char *shy_ui_prompt(void)
 {
@@ -24,20 +26,23 @@ int shy_ui_key(shy_ui_event *event, const char *key, const char *text)
     event->action = "";
     if (editor_mode) {
         size_t n = strlen(editor);
-        if (!strcmp(key, "escape")) { editor_mode = 0; *editor = 0; return 1; }
+        if (!strcmp(key, "escape")) { editor_mode = editor_error = 0; *editor = 0; return 1; }
         if (!strcmp(key, "backspace")) {
             if (n) { do { --n; } while (n && ((unsigned char)editor[n] & 0xc0) == 0x80); editor[n] = 0; }
+            editor_error=0;
             return 1;
         }
         if (!strcmp(key, "enter")) {
+            if (editor_error) {
+                event->action="invalid"; shy_sheet_notify("Editor input was rejected; correct with Backspace or cancel with Escape"); return 1;
+            }
             event->action = editor_mode == 1 ? "edit" : editor_mode == 2 ? "reason" : "filter";
             snprintf(event->text, sizeof event->text, "%s", editor); editor_mode = 0; return 1;
         }
         if (text && *text) {
             size_t m = strlen(text);
-            int safe = mulib_utf8_validate((const unsigned char *)text, m);
-            for (size_t i = 0; safe && i < m; ++i) if ((unsigned char)text[i] < 32 || (unsigned char)text[i] == 127) safe = 0;
-            if (safe && n+m < sizeof editor) memcpy(editor+n, text, m+1);
+            if (shy_sheet_text_valid(text) && m<sizeof editor-n) memcpy(editor+n, text, m+1);
+            else { editor_error=1; shy_sheet_notify("Editor input exceeds 1024 bytes or contains invalid/control text; nothing was truncated"); }
         }
         return 1;
     }
@@ -47,20 +52,20 @@ int shy_ui_key(shy_ui_event *event, const char *key, const char *text)
         }
         shy_sheet_text(shy_sheet_row(), shy_sheet_column_index(), editor, sizeof editor);
         if (!strcmp(editor, "?")) *editor = 0;
-        editor_mode = 1; return 1;
+        editor_mode = 1; editor_error=0; return 1;
     }
     if (!strcmp(key, "reason") || !strcmp(key, "n")) {
-        snprintf(editor, sizeof editor, "%s", shy_sheet_reason()); editor_mode = 2; return 1;
+        snprintf(editor, sizeof editor, "%s", shy_sheet_reason()); editor_mode = 2; editor_error=0; return 1;
     }
     if (!strcmp(key, "filter") || !strcmp(key, "/")) {
         if (shy_sheet_dirty()) { shy_sheet_notify("Save or discard staged edits before filtering"); return 1; }
-        *editor = 0; editor_mode = 3; return 1;
+        *editor = 0; editor_mode = 3; editor_error=0; return 1;
     }
     static const struct { const char *key, *action; } keys[] = {
         { "up", "up" }, { "k", "up" }, { "down", "down" }, { "j", "down" },
         { "left", "left" }, { "h", "left" }, { "right", "right" }, { "l", "right" },
         { "page_up", "page_up" }, { "page_down", "page_down" }, { "home", "home" },
-        { "end", "last" }, { "tab", "right" }, { "s", "save" }, { "save", "save" },
+        { "end", "last" }, { "last", "last" }, { "tab", "right" }, { "s", "save" }, { "save", "save" },
         { "r", "refresh" }, { "refresh", "refresh" }, { "d", "discard" }, { "discard", "discard" },
         { "o", "sort" }, { "sort", "sort" }, { "q", "quit" }, { "quit", "quit" }, { "escape", "quit" }
     };
@@ -77,17 +82,29 @@ static int render(void)
     return ok;
 }
 
+int64_t shy_ui_script_begin(const char *path)
+{
+    if (opened) return 0;
+    mulib_json_destroy(script); script=NULL; free(script_json); script_json=NULL; script_ready=0;
+    size_t n; char *text=shy_read(path,SHY_PAGE_LIMIT,&n);
+    script=text ? mulib_json_parse(text,n,NULL) : NULL; free(text);
+    return script!=NULL;
+}
+const char *shy_ui_script_json(void)
+{
+    free(script_json); script_json=script ? mulib_json_stringify(script,0) : NULL;
+    if (script_json && strlen(script_json)>SHY_PAGE_LIMIT) { free(script_json); script_json=NULL; }
+    return script_json ? script_json : "";
+}
+int64_t shy_ui_script_admit(void) { script_ready=script && script_json; return script_ready; }
+
 int64_t shy_ui_open(const char *kind, const char *events_path, const char *snapshot_path)
 {
     graphical = !strcmp(kind, "gui"); scripted = *events_path != 0;
     if (strcmp(kind, "gui") && strcmp(kind, "tui")) return 0;
     if (*snapshot_path && (!graphical || !scripted)) return 0;
     if (scripted) {
-        size_t n; char *text = shy_read(events_path, SHY_PAGE_LIMIT, &n);
-        script = text ? mulib_json_parse(text, n, NULL) : NULL; free(text);
-        const mulib_json_t *events = mulib_json_get(script, "events");
-        if (!script || strcmp(shy_text(script, "schema"), "shylock.ui-events/v1") ||
-            mulib_json_typeof(events) != MULIB_JSON_ARRAY || mulib_json_size(events) > 4096) return 0;
+        if (!script_ready) return 0; /* Never reread a file after On1x admission. */
         results = mulib_json_new(MULIB_JSON_ARRAY);
         if (!results) return 0;
     }
@@ -167,6 +184,13 @@ int64_t shy_ui_finish(void)
     int64_t status = ok && !action_failures ? 0 : 2;
     if (scripted) {
         mulib_json_t *out = shy_sheet_export();
+        mulib_json_t *editing=mulib_json_new(MULIB_JSON_OBJECT);
+        int editor_ok=shy_add(editing,"active",mulib_json_bool(editor_mode!=0)) &&
+            shy_add(editing,"text",mulib_json_string(editor)) &&
+            shy_add(editing,"prompt",mulib_json_string(shy_ui_prompt())) &&
+            shy_add(editing,"input_rejected",mulib_json_bool(editor_error));
+        if (!editor_ok) mulib_json_destroy(editing);
+        if (!editor_ok || !shy_add(out,"editor",editing)) { mulib_json_destroy(out); out=NULL; }
         mulib_json_t *rendered = mulib_json_new(MULIB_JSON_OBJECT);
         int built = out && shy_add(rendered, "backend", mulib_json_string(graphical ? "mulib-immgtk" : "mulib-tui")) &&
             shy_add(rendered, "frames", mulib_json_number((double)frames)) &&
@@ -181,7 +205,8 @@ int64_t shy_ui_finish(void)
     mulib_json_destroy(script); script = NULL;
     mulib_json_destroy(results); results = NULL;
     free(frame_path); frame_path = NULL;
-    event_index = frames = 0; editor_mode = action_failures = opened = scripted = graphical = 0;
+    free(script_json); script_json=NULL;
+    event_index = frames = 0; editor_mode = editor_error = action_failures = opened = scripted = graphical = script_ready = 0;
     *editor = 0;
     return status;
 }

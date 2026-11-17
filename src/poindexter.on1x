@@ -29,24 +29,44 @@ extern fn shy_store_series(cohort:string,currency:string,start:i64,step:i64,coun
 # Admission is domain policy, not a side effect of JSON parsing. Unknown
 # context remains evidence; only explicitly comparable reviews enter v1 cohorts.
 fn review_admissible()->bool {
+  return review_admission_issue()=="";
+}
+fn review_admission_issue()->string {
+  if !review_meaning_valid() { return "immutable source meaning"; }
   let currency=shy_review_field("currency");
   let scale=shy_review_number("scale");
-  if shy_review_number("minor")<0 || scale<0 || scale!=shy_money_scale(currency) ||
-     shy_review_field("basis")!="nightly" || shy_review_field("qualifier")!="unspecified" {
-    return false;
-  }
+  if shy_review_number("minor")<0 { return "amount"; }
+  if shy_money_scale(currency)<0 { return "currency"; }
+  if scale<0 || scale!=shy_money_scale(currency) { return "currency scale"; }
+  if shy_review_field("basis")!="nightly" { return "nightly rate basis"; }
+  if shy_review_field("qualifier")!="unspecified" { return "unqualified offer"; }
   if shy_review_verified()==1 {
     let taxes=shy_review_field("taxes");
     let fees=shy_review_field("fees");
     let start=shy_review_date("stay_start");
     let end=shy_review_date("stay_end");
     let guests=shy_review_number("guests");
-    if shy_review_field("listing_id")=="" || start<0 || end<=start || guests<1 || guests>64 ||
-       (taxes!="included" && taxes!="excluded") || (fees!="included" && fees!="excluded") {
-      return false;
-    }
+    if shy_review_field("listing_id")=="" { return "listing identity"; }
+    if start<0 || end<=start { return "ordered stay dates"; }
+    if guests<1 || guests>64 { return "guest count"; }
+    if taxes!="included" && taxes!="excluded" { return "tax inclusion"; }
+    if fees!="included" && fees!="excluded" { return "fee inclusion"; }
   }
-  return naive_review_admissible();
+  if !naive_review_admissible() { return "conflict resolution or immutable listing/qualifier"; }
+  return "";
+}
+fn review_meaning_valid()->bool {
+  # All verified extractor families retain source meaning independently from
+  # review context. Null/unknown resolutions cannot erase a known qualifier.
+  let source_currency=shy_review_source_field("currency");
+  let source_basis=shy_review_source_field("basis");
+  let source_qualifier=shy_review_source_field("qualifier");
+  return review_meaning_matches(source_currency,shy_review_field("currency")) &&
+    review_meaning_matches(source_basis,shy_review_field("basis")) &&
+    review_meaning_matches(source_qualifier,shy_review_field("qualifier"));
+}
+fn review_meaning_matches(original:string,value:string)->bool {
+  return original=="" || original=="unknown" || original==value;
 }
 
 fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string,

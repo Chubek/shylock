@@ -3,7 +3,11 @@ extern fn shy_sheet_close()->i64;
 extern fn shy_sheet_emit()->i64;
 extern fn shy_sheet_move(rows:i64,columns:i64)->i64;
 extern fn shy_sheet_select_cell(row:i64,column:string)->i64;
-extern fn shy_sheet_stage(key:string,text:string)->i64;
+import "worksheet_policy.on1x";
+extern fn shy_sheet_stage_value(key:string,json:string)->i64;
+extern fn shy_sheet_text_valid(text:string)->i64;
+extern fn shy_sheet_original(key:string)->string;
+extern fn shy_sheet_committed()->i64;
 extern fn shy_sheet_discard()->i64;
 extern fn shy_sheet_dirty()->i64;
 extern fn shy_sheet_filter(text:string)->i64;
@@ -15,6 +19,11 @@ extern fn shy_sheet_decision()->string;
 extern fn shy_sheet_reason()->string;
 extern fn shy_sheet_event(name:string)->i64;
 extern fn shy_ui_open(kind:string,events:string,frame:string)->i64;
+extern fn shy_ui_script_begin(path:string)->i64;
+extern fn shy_ui_script_json()->string;
+extern fn shy_ui_script_admit()->i64;
+extern fn shy_ui_editing()->i64;
+extern fn shy_ui_cancel_editor()->i64;
 extern fn shy_ui_next()->string;
 extern fn shy_ui_text()->string;
 extern fn shy_ui_column()->string;
@@ -38,11 +47,6 @@ fn worksheet_dump(path:string,cohort:string)->i64 {
   return result;
 }
 
-fn worksheet_editable(key:string)->bool {
-  return key=="listing_id" || key=="stay_start" || key=="stay_end" || key=="guests" ||
-    key=="taxes" || key=="fees" || key=="decision";
-}
-
 fn worksheet_save(path:string,cohort:string,reviewer:string)->i64 {
   if shy_sheet_dirty()==0 || shy_sheet_reason()=="" {
     shy_sheet_notify("Staged edits require an explicit review reason (n) before saving");
@@ -52,14 +56,16 @@ fn worksheet_save(path:string,cohort:string,reviewer:string)->i64 {
   var result=2;
   if shy_sheet_prepare_revision()==1 {
     let decision=shy_sheet_decision();
-    if decision=="rejected" || (decision=="accepted" && review_admissible()) {
+    var issue="review decision";
+    if decision=="accepted" { issue=review_admission_issue(); }
+    if decision=="rejected" || (decision=="accepted" && issue=="") {
       result=shy_revision_save(decision,reviewer,shy_sheet_reason());
-    } else { shy_sheet_notify("Review context remains unresolved or non-comparable; staged edits retained"); }
+    } else { shy_sheet_notify(text_concat(text_concat("Cannot accept: ",issue),"; staged edits retained")); }
   } else { shy_sheet_notify("Cannot prepare revision; original snapshot and staged edits retained"); }
   shy_store_close();
   if result==3 { shy_sheet_notify("Stale review: another writer changed this row. Edits retained; discard and refresh to rebase."); }
   if result==0 {
-    shy_sheet_discard();
+    shy_sheet_committed();
     result=worksheet_reload(path,cohort);
     if result==0 { shy_sheet_notify("Saved a new review revision; original evidence and review history retained"); }
     else { shy_sheet_notify("Review committed, but refresh failed; reopen the worksheet before editing again"); }
@@ -70,6 +76,9 @@ fn worksheet_save(path:string,cohort:string,reviewer:string)->i64 {
 }
 
 fn worksheet_action(action:string,path:string,cohort:string,reviewer:string)->i64 {
+  if shy_ui_editing()!=0 && action!="" && action!="resize" && action!="pointer" {
+    shy_sheet_notify("Finish or cancel the text editor before executing another action"); return 2;
+  }
   if action=="up" { return shy_sheet_move(-1,0); }
   if action=="down" { return shy_sheet_move(1,0); }
   if action=="left" { return shy_sheet_move(0,-1); }
@@ -80,12 +89,15 @@ fn worksheet_action(action:string,path:string,cohort:string,reviewer:string)->i6
   if action=="last" { return shy_sheet_move(16384,0); }
   if action=="select" { return shy_sheet_select_cell(shy_ui_row(),shy_ui_column()); }
   if action=="edit" {
-    if worksheet_editable(shy_sheet_key()) { return shy_sheet_stage(shy_sheet_key(),shy_ui_text()); }
+    if worksheet_editable(shy_sheet_key()) { return worksheet_stage(shy_sheet_key(),shy_ui_text()); }
     shy_sheet_notify("Evidence and audit cells are read-only");
     return 2;
   }
-  if action=="reason" { return shy_sheet_stage("$reason",shy_ui_text()); }
-  if action=="filter" { return shy_sheet_filter(shy_ui_text()); }
+  if action=="reason" { return worksheet_stage("$reason",shy_ui_text()); }
+  if action=="filter" {
+    if text_len(shy_ui_text())>256 || shy_sheet_text_valid(shy_ui_text())!=1 { return 2; }
+    return shy_sheet_filter(shy_ui_text());
+  }
   if action=="sort" { return shy_sheet_sort(); }
   if action=="discard" { return shy_sheet_discard(); }
   if action=="save" { return worksheet_save(path,cohort,reviewer); }
@@ -100,8 +112,11 @@ fn worksheet_action(action:string,path:string,cohort:string,reviewer:string)->i6
 
 fn worksheet(path:string,cohort:string,reviewer:string,kind:string,events:string,frame:string)->i64 {
   if reviewer=="" || text_len(reviewer)>128 { return shy_error("worksheet requires a reviewer label"); }
+  if !worksheet_prepare_script(kind,events) {
+    shy_document_close(); shy_ui_finish(); return shy_error("invalid worksheet event script; no actions executed");
+  }
   let loaded=worksheet_reload(path,cohort);
-  if loaded!=0 { shy_sheet_close(); return loaded; }
+  if loaded!=0 { shy_ui_finish(); shy_sheet_close(); return loaded; }
   if shy_ui_open(kind,events,frame)!=1 {
     shy_ui_finish(); shy_sheet_close();
     return shy_error("cannot open worksheet frontend or event script");
@@ -113,8 +128,11 @@ fn worksheet(path:string,cohort:string,reviewer:string,kind:string,events:string
     let action=shy_ui_next();
     var result=0;
     if action=="quit" {
-      if shy_sheet_dirty()!=0 && !quitting { quitting=true; shy_sheet_notify("Unsaved edits. Press q again to discard and quit, or s to save."); }
-      else { running=false; }
+      if (shy_sheet_dirty()!=0 || shy_ui_editing()!=0) && !quitting { quitting=true; shy_sheet_notify("Unsaved edits. Press q again to discard and quit, or s to save."); }
+      else {
+        if quitting { shy_sheet_discard(); shy_ui_cancel_editor(); }
+        running=false;
+      }
     }
     else { if action=="stop" || action=="end" { running=false; }
     else { if action=="fatal" { result=2; running=false; }

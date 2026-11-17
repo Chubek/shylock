@@ -115,7 +115,7 @@ $(BUILD)/metaprogramming-tests: tests/metaprogramming.on1x src/demand_macros.on1
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
 
 DRAGNET_NATIVE := plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c src/registry.c src/evidence.c
-$(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c $(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
+$(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_alloc.c src/document.c src/engine.c src/context.c src/series.c src/latex.c src/record.c plugins/poindexter/sheet.c $(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" --mulib json --mulib cryptohash --mulib latex \
 	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
@@ -125,6 +125,7 @@ $(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_all
 	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
 	  $(foreach file,$(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE),--extra-c $(file)) \
 	  --extra-c tests/document_alloc.c --extra-c src/document.c --extra-c src/engine.c --extra-c src/context.c --extra-c src/series.c --extra-c src/latex.c --extra-c src/record.c \
+	  --extra-c plugins/poindexter/sheet.c \
 	  --cflag=-Wl,--wrap=malloc --cflag=-Wl,--wrap=calloc --cflag=-Wl,--wrap=realloc \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) -o "$@"
 
@@ -143,6 +144,7 @@ test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/me
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/calculation.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/reports.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/worksheet.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/poindexter_finish.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/sandbox.py
 	SDL_VIDEODRIVER=dummy "$(BUILD)/native-tests"
 	$(PYTHON) tests/metaprogramming.py "$(ON1XC)" "$(BUILD)/ppx-fields" "$(ON1X)" "$(BUILD)/metaprogramming-tests"

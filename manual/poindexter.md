@@ -3,7 +3,8 @@
 Poindexter is Shylock's local evidence ledger, not approved accounting software.
 For collection-aware review and direct forecast/pricing from current review heads,
 see [Dragnet pricing integration](dragnet-pricing.md).
-It uses MuLIB KVDB at revision `151528b50b316aeea804ce2aebf66ef90b9e7100`.
+It uses MuLIB KVDB, now retested with the rest of Shylock at revision
+`eeb6de585303e1ea0dfd8bf2260328289b04587c`.
 On1x owns admission, review orchestration and cohort comparability. C11 adapters
 own JSON trees, immutable byte snapshots and database handles. An exclusive
 advisory writer lock covers database open, read/modify, commit and close.
@@ -97,6 +98,10 @@ currencies, explicit stay-total/fee bases and “from” qualifiers cannot be
 rewritten into contradictory nightly quotes. Model suggestions require explicit
 review of both basis and qualifier. Every original candidate remains attached
 to its review as `evidence`, independently of the review's resolved fields.
+The shared On1x admission gate preserves known source currency, basis and
+qualifier for all extractor families, including compatibility input. Unknowns
+can be resolved explicitly; original/discounted/from claims cannot be laundered
+into unqualified nightly observations through context.
 
 Supported currency scales currently are:
 
@@ -213,12 +218,17 @@ Mune formulas retain deterministic math but not random, file, process, module,
 debug or extension capabilities. Native tests check two formula evaluations in
 one process for state isolation. The default backend is in-process; an optional
 [Linux process sandbox](sandbox.md) isolates formula and extension execution.
-The shared [worksheet TUI/GUI](worksheet.md) edits reviewed context through this
-same admission and append-only revision contract. [Effectful extensions](extensions.md)
+The shared [worksheet TUI/GUI](worksheet.md) completes rejected/incomplete reviews,
+resolves unknown currency/basis/qualifier and records explicit conflict rationale
+through the same admission and append-only revision contract. It exposes source
+and collection lineage without making quoted amounts editable. Closed scripts
+are admitted before actions; rejected editor input cannot be silently truncated
+or saved. [Effectful extensions](extensions.md)
 have a separate state/lifecycle and scoped host capabilities; formulas never
-inherit them. Dynamic native plugins, live model calls and headless automation
-remain separate future implementations. No unattended acquisition or
-live-provider verification is claimed here.
+inherit them. [Dynamic native extractors](sdk.md), opt-in live model calls and
+[static browser jobs](intelligence.md) have separate explicit implementations;
+they are not worksheet permissions. No unattended acquisition or live-provider
+verification is claimed here.
 
 `make test` runs the existing CLI and Poindexter suites, verified pipeline
 fixtures, concurrent idempotent imports, review conflicts/revisions, replay

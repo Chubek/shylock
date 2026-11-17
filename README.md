@@ -201,7 +201,12 @@ for the schema, commands, compatibility and limitations.
 ./shylock sheet prices.db cottages-eur
 ```
 
-Both frontends share the versioned worksheet model and On1x controller. Use
+Both frontends share the versioned worksheet model and On1x controller. Rejected
+or incomplete reviews can resolve unknown currency/basis/qualifier and stage
+explicit conflict rationale, while quoted amounts and known source meaning stay
+protected. Provenance columns retain Dragnet collection links. Event scripts are
+fully preflighted before actions, and editor limits never silently truncate a
+review. Valid documented v1 scripts and ledger files need no migration. Use
 arrows to select a cell, Enter to edit context, `n` to enter a review reason,
 and `s` to publish a new review revision. `/` filters, `o` sorts, `r` refreshes,
 `d` discards staged edits and `q` quits. Evidence, monetary amounts, currency,

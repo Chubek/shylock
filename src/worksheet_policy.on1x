@@ -1,0 +1,113 @@
+import std.parsec.parsec as WSScan;
+import std.sexpr.sexpr as WSX;
+
+# Both frontends submit text to one typed review policy. Evidence amounts and
+# scales remain immutable; resolving an unknown currency uses MuLIB on save.
+fn worksheet_editable(key:string)->bool {
+  return key=="listing_id" || key=="stay_start" || key=="stay_end" || key=="guests" ||
+    key=="taxes" || key=="fees" || key=="decision" || key=="currency" || key=="basis" ||
+    key=="qualifier" || key=="conflict_resolution";
+}
+fn worksheet_basis(value:string)->bool {
+  return value=="nightly" || value=="weekly" || value=="monthly" || value=="per_day" ||
+    value=="stay_total" || value=="cleaning_fee" || value=="service_fee" || value=="tax" ||
+    value=="refundable_deposit" || value=="unknown";
+}
+fn worksheet_stage(key:string,value:string)->i64 {
+  var limit=256; if key=="$reason" { limit=1024; }
+  if value=="" || text_len(value)>limit || shy_sheet_text_valid(value)!=1 {
+    shy_sheet_notify("Value is empty, exceeds its byte limit or contains invalid/control text"); return 2;
+  }
+  if key!="$reason" && !worksheet_editable(key) { shy_sheet_notify("Evidence and audit cells are read-only"); return 2; }
+  var valid=true; var encoded="";
+  if key=="guests" {
+    let (ok,guests,end)=WSScan.basis_parsec_int(value,0);
+    valid=ok && end==text_len(value) && text_len(value)<=2 && guests>=1 && guests<=64;
+    var i=0;
+    while i<text_len(value) { if text_byte(value,i)<48 || text_byte(value,i)>57 { valid=false; } i=i+1; }
+    if valid { encoded=WSX.sexpr_nat(guests); }
+  }
+  if key=="stay_start" || key=="stay_end" { valid=shy_date(value)>=0; }
+  if key=="taxes" || key=="fees" { valid=value=="included" || value=="excluded" || value=="unknown"; }
+  if key=="decision" { valid=value=="accepted" || value=="rejected"; }
+  if key=="currency" { valid=shy_money_scale(value)>=0; }
+  if key=="basis" { valid=worksheet_basis(value); }
+  if key=="qualifier" {
+    valid=value=="unspecified" || value=="unknown" || value=="from" || value=="original" || value=="discounted";
+  }
+  if key=="currency" || key=="basis" || key=="qualifier" {
+    valid=valid && review_meaning_matches(shy_sheet_original(key),value);
+  }
+  if !valid { shy_sheet_notify("Invalid typed value or attempted contradiction of known source evidence"); return 2; }
+  if key!="guests" { encoded=text_concat("",shy_json_quote(value)); }
+  return shy_sheet_stage_value(key,encoded);
+}
+
+# Scripts are fully admitted before loading the ledger or executing any event.
+# Domain failures still occur per action, but malformed late events cannot leave
+# earlier saves behind. The native layer retains the exact inspected JSON tree.
+fn worksheet_column(key:string)->bool {
+  return worksheet_editable(key) || key=="minor" || key=="scale" || key=="captured_at" ||
+    key=="provenance" || key=="review_id" || key=="observation_id" || key=="reviewer" ||
+    key=="reason" || key=="cohort" || key=="source_url" || key=="extraction_id" ||
+    key=="capture_id" || key=="collection_id" || key=="find_id";
+}
+fn worksheet_navigation(action:string)->bool {
+  return action=="up" || action=="down" || action=="left" || action=="right" || action=="page_up" ||
+    action=="page_down" || action=="home" || action=="last" || action=="save" || action=="discard" ||
+    action=="refresh" || action=="sort" || action=="quit";
+}
+fn worksheet_key_valid(key:string)->bool {
+  if text_len(key)==1 { return shy_sheet_text_valid(key)==1; }
+  return worksheet_navigation(key) || key=="enter" || key=="escape" || key=="backspace" ||
+    key=="end" || key=="tab" || key=="text" || key=="edit" || key=="reason" || key=="filter";
+}
+fn worksheet_event_valid(index:i64,graphical:bool)->bool {
+  let action=shy_document_text("events",index,"action");
+  if worksheet_navigation(action) { return @fields("closed","events",index,"action:string"); }
+  if action=="select" {
+    return @fields("closed","events",index,"action:string","row:integer","column:string") &&
+      shy_document_number("events",index,"row")<16384 && worksheet_column(shy_document_text("events",index,"column"));
+  }
+  if action=="edit" || action=="reason" || action=="filter" {
+    let value=shy_document_text("events",index,"text");
+    return @fields("closed","events",index,"action:string","text:string") &&
+      text_len(value)<=1024 && shy_sheet_text_valid(value)==1;
+  }
+  if action=="key" {
+    var valid=false;
+    if shy_document_has("events",index,"text","string")==1 {
+      valid=@fields("closed","events",index,"action:string","key:string","text:string") &&
+        text_len(shy_document_text("events",index,"text"))<=1024 &&
+        shy_sheet_text_valid(shy_document_text("events",index,"text"))==1;
+    } else { valid=@fields("closed","events",index,"action:string","key:string"); }
+    return valid && worksheet_key_valid(shy_document_text("events",index,"key"));
+  }
+  if action=="resize" {
+    if !@fields("closed","events",index,"action:string","width:integer","height:integer") { return false; }
+    let width=shy_document_number("events",index,"width"); let height=shy_document_number("events",index,"height");
+    if graphical { return width>=640 && width<=1920 && height>=400 && height<=1200; }
+    return width>=40 && width<=240 && height>=12 && height<=80;
+  }
+  if action=="pointer" {
+    return graphical && @fields("closed","events",index,"action:string","x:integer","y:integer","down:boolean") &&
+      shy_document_number("events",index,"x")<=1920 && shy_document_number("events",index,"y")<=1200;
+  }
+  return false;
+}
+fn worksheet_script_valid(graphical:bool)->bool {
+  if !@fields("closed","",-1,"schema:string","events:array") ||
+    shy_document_text("",-1,"schema")!="shylock.ui-events/v1" { return false; }
+  let count=shy_document_size("",-1,"events");
+  if count>4096 { return false; }
+  var i=0;
+  while i<count { if !worksheet_event_valid(i,graphical) { return false; } i=i+1; }
+  return true;
+}
+fn worksheet_prepare_script(kind:string,path:string)->bool {
+  if path=="" { return true; }
+  if shy_ui_script_begin(path)!=1 { return false; }
+  if shy_document_parse(shy_ui_script_json())!=1 { return false; }
+  let valid=worksheet_script_valid(kind=="gui"); shy_document_close();
+  return valid && shy_ui_script_admit()==1;
+}

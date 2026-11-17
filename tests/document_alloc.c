@@ -7,6 +7,7 @@
 #include "../plugins/dragnet/intelligence.h"
 #include "../plugins/dragnet/naive.h"
 #include "../plugins/dragnet/collection.h"
+#include "../plugins/poindexter/sheet.h"
 #include "mulib-elvi-scrape.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,17 @@ int64_t shy_optimize_data(const mulib_json_t *json, const char *digest,
 int64_t shy_emit(mulib_json_t *record) { mulib_json_destroy(record); return 2; }
 int shy_extensions_enqueue(const char *event, const mulib_json_t *payload)
 { (void)event; (void)payload; return 1; }
+int shy_extensions_event(const char *event,const mulib_json_t *payload)
+{ (void)event; (void)payload; return 1; }
+/* Resource-only worksheet selection; real store/revision policy is covered by
+   worksheet.py and poindexter_finish.py against actual KVDB databases. */
+static const char sheet_fixture[]="[{\"schema\":\"shylock.observation/v2\",\"observation_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+    "\"review_id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"listing_id\":\"Cottage\",\"decision\":\"accepted\","
+    "\"minor\":18000,\"currency\":\"EUR\",\"scale\":2,\"guests\":2,\"evidence\":{\"currency\":\"EUR\"}}]";
+int64_t shy_store_select(const char *cohort) { (void)cohort; return 1; }
+mulib_json_t *shy_store_rows(void) { return mulib_json_parse(sheet_fixture,sizeof sheet_fixture-1,NULL); }
+int64_t shy_revision_load_data(const char *id,const char *expected,const mulib_json_t *data)
+{ (void)id; (void)expected; return data!=NULL; }
 static int unavailable_tls(void *context,const mulib_uri_t *endpoint,mulib_tsl_t *out)
 { (void)context; (void)endpoint; (void)out; return 0; }
 
@@ -90,6 +102,33 @@ static int collection_allocations(void)
         if (!ok) fprintf(stderr,"collection allocation check failed at %zu/%zu (success=%d injected=%d calls=%zu)\n",at,limit,success,injected,calls);
     }
     free(metadata); free(row); free(extraction); mulib_json_destroy(fixture); return ok;
+}
+static int sheet_allocations(void)
+{
+    int ok=shy_sheet_text_valid("caf\xc3\xa9")==1 && !shy_sheet_text_valid("\x1b[31m") &&
+        !shy_sheet_text_valid("\xff") && !shy_sheet_text_valid("\xc2\x85");
+    size_t limit=0;
+    for (size_t at=0;ok && (at==0 || at<=limit);++at) {
+        calls=0; injected=0; fault=at ? at : SIZE_MAX;
+        int success=shy_sheet_load("market")==0 && shy_sheet_stage_value("guests","3")==0 &&
+            shy_sheet_stage_value("$reason","\"Checked\"")==0;
+        mulib_json_t *out=success ? shy_sheet_export() : NULL;
+        success=success && out;
+        if (!at) { limit=calls; if (!success || limit<50) ok=0; }
+        if ((at && !injected) || (injected && success)) ok=0;
+        fault=0; mulib_json_destroy(out); shy_sheet_close(); shy_sheet_close();
+    }
+    if (!ok || shy_sheet_load("market")!=0 || shy_sheet_stage_value("guests","3")!=0) return 0;
+    shy_sheet_committed(); /* Acknowledged commit, then an allocation-failed reload. */
+    calls=0; fault=1;
+    int failed_reload=shy_sheet_load("market")!=0;
+    fault=0;
+    mulib_json_t *out=shy_sheet_export();
+    ok=failed_reload && out && mulib_json_boolean(mulib_json_get(out,"refresh_required")) &&
+        shy_sheet_stage_value("guests","4")==2 && !shy_sheet_prepare_revision();
+    mulib_json_destroy(out);
+    if (shy_sheet_load("market")!=0 || shy_sheet_stage_value("guests","4")!=0) ok=0;
+    shy_sheet_close(); shy_sheet_close(); return ok;
 }
 
 int64_t shy_document_allocation_test(void)
@@ -246,5 +285,5 @@ int64_t shy_document_allocation_test(void)
         (void)shy_browser_finish(0);
         fault=0; reached+=injected; shy_browser_close(); shy_browser_close();
     }
-    return ok && reached > 50 && elvi_parse_failures>0 && collection_allocations();
+    return ok && reached > 50 && elvi_parse_failures>0 && collection_allocations() && sheet_allocations();
 }

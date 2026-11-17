@@ -219,6 +219,16 @@ and pricing outside the lock. Preserve full recomputation on replay, explicit
 review admission, duplicate idempotency and independent partial-extraction status.
 Read manual/dragnet-pricing.md and keep tests/collection.py passing.
 
+Poindexter worksheet review completion lives in src/worksheet_policy.on1x.
+Keep typed edit validation and closed-script preflight in On1x; C11 stages
+validated scalars and owns the inspected tree and frontend resources. Unknown
+currency/basis/qualifier may be resolved explicitly, but known source meaning
+and quoted amounts must not be overwritten. Conflict resolution is a separate
+context field. Preserve refresh_required after a committed save whose reload
+failed, and reject truncated/invalid editor input. Keep tests/worksheet.py and
+tests/poindexter_finish.py passing, including native sheet allocation/cleanup
+coverage. Read manual/worksheet.md before extending it.
+
 ## The Use of On1x Metaprogramming Features
 
 The agent is encouraged to use On1x's metaprogramming features. Hygenic macros

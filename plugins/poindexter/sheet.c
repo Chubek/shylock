@@ -8,23 +8,44 @@
 
 const shy_sheet_column shy_sheet_columns[SHY_SHEET_COLUMNS] = {
     { "listing_id", "Listing", "text", 1 }, { "minor", "Amount (minor)", "integer", 0 },
-    { "currency", "Currency", "text", 0 }, { "scale", "Scale", "integer", 0 },
+    { "currency", "Currency", "text", 1 }, { "scale", "Scale", "integer", 0 },
     { "stay_start", "Stay start", "date", 1 }, { "stay_end", "Stay end", "date", 1 },
     { "guests", "Guests", "integer", 1 }, { "taxes", "Taxes", "scope", 1 },
-    { "fees", "Fees", "scope", 1 }, { "basis", "Rate basis", "text", 0 },
-    { "qualifier", "Qualifier", "text", 0 }, { "decision", "Decision", "decision", 1 },
+    { "fees", "Fees", "scope", 1 }, { "basis", "Rate basis", "text", 1 },
+    { "qualifier", "Qualifier", "text", 1 }, { "decision", "Decision", "decision", 1 },
     { "captured_at", "Captured at", "integer", 0 }, { "provenance", "Provenance", "text", 0 },
     { "review_id", "Review ID", "text", 0 }, { "observation_id", "Observation ID", "text", 0 },
-    { "reviewer", "Reviewer", "text", 0 }, { "reason", "Review reason", "text", 0 }
+    { "reviewer", "Reviewer", "text", 0 }, { "reason", "Review reason", "text", 0 },
+    { "conflict_resolution", "Conflict resolution", "text", 1 }, { "cohort", "Cohort", "text", 0 },
+    { "source_url", "Source URL", "text", 0 }, { "extraction_id", "Extraction ID", "text", 0 },
+    { "capture_id", "Capture ID", "text", 0 }, { "collection_id", "Collection ID", "text", 0 },
+    { "find_id", "Find ID", "text", 0 }
 };
 static mulib_json_t *rows, *pending;
 static size_t view[SHY_SHEET_ROWS], count, active_row, active_column, sort_column;
-static int descending;
+static int descending, refresh_required;
 static char filter[257], cohort_name[129], note[1025], decision[16], message[256];
 
 static mulib_json_t *row_at(size_t index)
 {
     return index < count ? mulib_json_at(rows, view[index]) : NULL;
+}
+static const mulib_json_t *published_cell(const mulib_json_t *row,const char *key)
+{
+    if (!strcmp(key,"collection_id") || !strcmp(key,"find_id")) return mulib_json_get(mulib_json_get(row,"collection"),key);
+    const mulib_json_t *value=mulib_json_get(row,key);
+    return value || strcmp(key,"conflict_resolution") ? value : mulib_json_get(mulib_json_get(row,"review_context"),key);
+}
+const char *shy_sheet_original(const char *key) { return shy_text(mulib_json_get(row_at(active_row),"evidence"),key); }
+int64_t shy_sheet_text_valid(const char *text)
+{
+    size_t n=strlen(text),pos=0;
+    while (pos<n) {
+        uint32_t cp; size_t used;
+        if (!mulib_utf8_decode((const unsigned char *)text+pos,n-pos,&cp,&used) || cp<32 || (cp>=127 && cp<=159)) return 0;
+        pos+=used;
+    }
+    return 1;
 }
 
 static int fail(const char *text)
@@ -51,12 +72,15 @@ static int compare_rows(const void *a, const void *b)
 {
     const mulib_json_t *x = mulib_json_at(rows, *(const size_t *)a), *y = mulib_json_at(rows, *(const size_t *)b);
     const char *key = shy_sheet_columns[sort_column].key;
-    const mulib_json_t *vx = mulib_json_get(x, key), *vy = mulib_json_get(y, key);
+    const mulib_json_t *vx = published_cell(x, key), *vy = published_cell(y, key);
     int order;
     if (mulib_json_typeof(vx) == MULIB_JSON_NUMBER && mulib_json_typeof(vy) == MULIB_JSON_NUMBER) {
         double nx = mulib_json_numeric(vx), ny = mulib_json_numeric(vy);
         order = nx < ny ? -1 : nx > ny;
-    } else order = strcmp(shy_text(x, key), shy_text(y, key));
+    } else {
+        const char *sx=mulib_json_text(vx,NULL),*sy=mulib_json_text(vy,NULL);
+        order=strcmp(sx ? sx : "",sy ? sy : "");
+    }
     if (order) return descending ? -order : order;
     return strcmp(shy_text(x, "observation_id"), shy_text(y, "observation_id"));
 }
@@ -85,8 +109,8 @@ static void rebuild(const char *preserve)
         const mulib_json_t *row = mulib_json_at(rows, i);
         int match = !*filter;
         for (size_t j = 0; !match && j < SHY_SHEET_COLUMNS; ++j) {
-            const mulib_json_t *value = mulib_json_get(row, shy_sheet_columns[j].key);
-            if (mulib_json_typeof(value) == MULIB_JSON_STRING) match = contains(shy_text(row, shy_sheet_columns[j].key), filter);
+            const mulib_json_t *value = published_cell(row, shy_sheet_columns[j].key);
+            if (mulib_json_typeof(value) == MULIB_JSON_STRING) match = contains(mulib_json_text(value,NULL), filter);
             else if (mulib_json_typeof(value) == MULIB_JSON_NUMBER) {
                 char number[64]; snprintf(number, sizeof number, "%.0f", mulib_json_numeric(value));
                 match = contains(number, filter);
@@ -109,6 +133,7 @@ int64_t shy_sheet_load(const char *cohort)
     mulib_json_destroy(rows); rows = copy;
     snprintf(cohort_name, sizeof cohort_name, "%s", cohort);
     rebuild(preserve);
+    refresh_required=0;
     return 0;
 }
 
@@ -118,12 +143,17 @@ int64_t shy_sheet_discard(void)
     *note = 0; *decision = 0;
     return shy_sheet_notify("Staged edits discarded; published evidence was not changed");
 }
+int64_t shy_sheet_committed(void)
+{
+    shy_sheet_discard(); refresh_required=1;
+    return 0;
+}
 
 int64_t shy_sheet_close(void)
 {
     mulib_json_destroy(rows); rows = NULL;
     mulib_json_destroy(pending); pending = NULL;
-    count = active_row = active_column = sort_column = 0; descending = 0;
+    count = active_row = active_column = sort_column = 0; descending = refresh_required = 0;
     *filter = *cohort_name = *note = *decision = *message = 0;
     return 0;
 }
@@ -170,44 +200,37 @@ int64_t shy_sheet_sort(void)
     return 0;
 }
 
-int64_t shy_sheet_stage(const char *key, const char *text)
+int64_t shy_sheet_stage_value(const char *key, const char *json)
 {
+    if (refresh_required) return fail("Review committed; refresh successfully before staging another edit");
     if (!row_at(active_row)) return fail("The worksheet has no selected row");
     if (strcmp(shy_text(row_at(active_row), "schema"), "shylock.observation/v2"))
         return fail("Legacy flat records are read-only; re-import evidence for revision support");
-    if (!strcmp(key, "$reason")) {
-        if (!*text || strlen(text) > 1024) return fail("A review reason must contain 1..1024 bytes");
-        snprintf(note, sizeof note, "%s", text);
-        return shy_sheet_notify("Reason staged; save explicitly to publish a review revision");
+    if (strlen(json)>8192) return fail("Staged scalar exceeds native bound");
+    mulib_json_t *value=mulib_json_parse(json,strlen(json),NULL);
+    size_t length=0; const char *text=mulib_json_text(value,&length);
+    if (!strcmp(key,"$reason") || !strcmp(key,"decision")) {
+        char *target=!strcmp(key,"$reason") ? note : decision;
+        size_t capacity=!strcmp(key,"$reason") ? sizeof note : sizeof decision;
+        int valid=text && length && strlen(text)==length && length<capacity && shy_sheet_text_valid(text);
+        if (valid) memcpy(target,text,length+1);
+        mulib_json_destroy(value);
+        return valid ? shy_sheet_notify("Review value staged; save explicitly to publish") : fail("Invalid staged text scalar");
     }
     size_t i;
     for (i = 0; i < SHY_SHEET_COLUMNS; ++i) if (!strcmp(shy_sheet_columns[i].key, key)) break;
-    if (i == SHY_SHEET_COLUMNS || !shy_sheet_columns[i].editable) return fail("Evidence and audit cells are read-only");
-    if (!*text || strlen(text) > 256) return fail("Cell value must contain 1..256 bytes");
-    if (!strcmp(key, "decision")) {
-        if (strcmp(text, "accepted") && strcmp(text, "rejected")) return fail("Decision must be accepted or rejected");
-        snprintf(decision, sizeof decision, "%s", text);
-    } else {
-        mulib_json_t *value = NULL;
-        if (!strcmp(key, "guests")) {
-            if (strlen(text) > 2 || strspn(text, "0123456789") != strlen(text)) return fail("Guests must be an integer in 1..64");
-            long guests = strtol(text, NULL, 10);
-            if (guests < 1 || guests > 64) return fail("Guests must be an integer in 1..64");
-            value = mulib_json_number((double)guests);
-        } else {
-            if ((!strcmp(key, "stay_start") || !strcmp(key, "stay_end")) && shy_date(text) < 0) return fail("Expected a valid YYYY-MM-DD date");
-            if ((!strcmp(key, "taxes") || !strcmp(key, "fees")) && strcmp(text, "included") &&
-                strcmp(text, "excluded") && strcmp(text, "unknown")) return fail("Scope must be included, excluded or unknown");
-            value = mulib_json_string(text);
-        }
-        if (!pending) pending = mulib_json_new(MULIB_JSON_OBJECT);
-        if (!shy_add(pending, key, value)) return fail("Cannot allocate staged edit");
-    }
+    if (i == SHY_SHEET_COLUMNS || !shy_sheet_columns[i].editable) { mulib_json_destroy(value); return fail("Evidence and audit cells are read-only"); }
+    int valid=!strcmp(key,"guests") ? mulib_json_typeof(value)==MULIB_JSON_NUMBER :
+        text && length && strlen(text)==length && length<=256 && shy_sheet_text_valid(text);
+    if (!valid) { mulib_json_destroy(value); return fail("Invalid staged scalar"); }
+    if (!pending) pending = mulib_json_new(MULIB_JSON_OBJECT);
+    if (!shy_add(pending, key, value)) return fail("Cannot allocate staged edit");
     return shy_sheet_notify("Edit staged; add a reason with n, then save with s");
 }
 
 int64_t shy_sheet_prepare_revision(void)
 {
+    if (refresh_required) return 0;
     if (!shy_sheet_dirty() || !*note) return fail("Staged edits require an explicit review reason (n) before saving");
     const mulib_json_t *row = row_at(active_row);
     mulib_json_t *empty = pending ? NULL : mulib_json_new(MULIB_JSON_OBJECT);
@@ -224,7 +247,7 @@ const mulib_json_t *shy_sheet_cell(size_t row, size_t column)
         const mulib_json_t *value = mulib_json_get(pending, key);
         if (value) return value;
     }
-    return mulib_json_get(row_at(row), key);
+    return published_cell(row_at(row), key);
 }
 
 void shy_sheet_text(size_t row, size_t column, char *out, size_t capacity)
@@ -269,7 +292,7 @@ mulib_json_t *shy_sheet_export(void)
     for (size_t i = 0; i < count; ++i) {
         mulib_json_t *row = mulib_json_new(MULIB_JSON_OBJECT);
         for (size_t j = 0; j < SHY_SHEET_COLUMNS; ++j) {
-            const mulib_json_t *value = mulib_json_get(row_at(i), shy_sheet_columns[j].key);
+            const mulib_json_t *value = published_cell(row_at(i), shy_sheet_columns[j].key);
             if (!shy_add(row, shy_sheet_columns[j].key, value ? shy_clone(value) : mulib_json_new(MULIB_JSON_NULL))) {
                 mulib_json_destroy(row); goto fail;
             }
@@ -286,6 +309,7 @@ mulib_json_t *shy_sheet_export(void)
         !shy_add(out, "pending", pending ? shy_clone(pending) : mulib_json_new(MULIB_JSON_OBJECT)) ||
         !shy_add(out, "pending_decision", mulib_json_string(decision)) ||
         !shy_add(out, "pending_reason", mulib_json_string(note)) ||
+        !shy_add(out, "refresh_required", mulib_json_bool(refresh_required)) ||
         !shy_add(out, "message", mulib_json_string(message))) goto fail;
     if (!mulib_json_set(out, "columns", columns)) goto fail;
     columns = NULL;

@@ -37,18 +37,33 @@ Headless renders use that fallback for reproducible pixels.
 | Cell | Type | Editable |
 | --- | --- | --- |
 | Listing identity | Text | Yes |
-| Amount in minor units, currency, scale | Integer/text | No |
+| Amount in minor units, scale | Integer | No |
+| Currency | Supported explicit ISO code | Resolve unknown source currency; cannot contradict known evidence |
 | Stay start/end | Valid `YYYY-MM-DD` dates | Yes |
 | Guests | Integer 1..64 | Yes |
 | Taxes, fees | `included`, `excluded`, `unknown` | Yes |
-| Basis, qualifier | Evidence meaning | No |
+| Basis, qualifier | Evidence meaning | Resolve unknowns; cannot contradict known evidence |
+| Conflict resolution | Explicit rationale, 1..256 bytes | Yes |
 | Review decision | `accepted`, `rejected` | Yes |
 | Capture time, provenance, review/observation IDs, reviewer, published reason | Audit/evidence | No |
+| Cohort, source URL, extraction/capture IDs, collection/find IDs | Lineage | No |
 
 Money remains integer minor units. The grid shows scale explicitly and never
 converts a nightly quote, stay total or fee into another meaning. Pre-revision
 flat legacy rows are readable but not editable; re-import their evidence to
 create revision heads. The current amount is never an editable scratch value.
+Resolving a missing currency reparses the **original amount token** with checked
+MuLIB money at save; it does not convert or replace an existing quote. An earlier
+reviewer interpretation of an originally unknown currency can be corrected in a
+new revision. A source's explicit known currency cannot.
+
+Basis supports `nightly`, `weekly`, `monthly`, `per_day`, `stay_total`,
+`cleaning_fee`, `service_fee`, `tax`, `refundable_deposit` and `unknown`.
+Qualifiers support `unspecified`, `from`, `original`, `discounted` and `unknown`.
+Comparable acceptance still requires `nightly` and `unspecified`; other
+interpretations can be retained on rejected evidence. Conflicting NaiveFinder
+evidence needs a newly staged `conflict_resolution` when accepting a revision.
+This is separate from the required audit reason.
 
 - **Arrows / h j k l:** select a cell. Page Up/Down move ten rows; Home/End go
   to the first/last row. The view scrolls to keep the selection visible.
@@ -64,6 +79,12 @@ create revision heads. The current amount is never an editable scratch value.
 - **d:** explicitly discard staged edits and the pending reason.
 - **q:** quit. With staged changes, the first quit warns; a second quit discards
   them. EOF/termination also closes without saving.
+
+Input is validated as UTF-8 and cannot contain terminal control characters.
+Editor overflow/invalid paste is reported, never silently truncated or committed.
+Enter refuses rejected input until Backspace explicitly corrects it or Escape
+cancels. Finish or cancel an active editor before a scripted save, selection,
+sort or other model action. Unsubmitted editor text triggers a first-quit warning.
 - **?:** show the key summary in the terminal status area.
 
 The GUI supports cell selection by mouse and Save/Reason/Filter/Refresh/Discard/
@@ -95,6 +116,12 @@ snapshot, pending cells and reason remain available. Explicitly discard and
 refresh before rebasing; no automatic merge silently replaces another review.
 An uncertain commit is not automatically retried; inspect the current ledger
 before deciding what to do next.
+
+After a known successful commit, failed refresh sets `refresh_required:true`:
+the old snapshot remains inspectable but no new edit/save can use it. Successful
+refresh is required before editing resumes. Published changes are not described
+as an unsaved draft. Admission reports the first unresolved field, retaining
+staged edits on failure.
 
 Configured extensions receive `worksheet.opened`, committed
 `observation.reviewed` and `worksheet.saved` events outside the ledger lock.
@@ -132,6 +159,14 @@ script input is accepted. File-backed scripts may publish revisions only with
 explicit `save` events and reasons. At EOF, unsaved pending values are reported,
 never automatically committed.
 
+The complete root and **every** event are admitted by On1x before opening the
+ledger or executing the first action. Objects are closed: unknown fields,
+internal actions (`fatal`, `end`, `stop`), bad types, invalid/control text and
+backend-incompatible geometry fail with exit 2 and no worksheet actions. The
+adapter executes the retained inspected tree, not a reopened mutable script file.
+Domain/stale-writer/I/O failures remain per-action failures: a valid script is
+not a multi-save database transaction.
+
 Actions include navigation names (`up`, `down`, `left`, `right`, `page_up`,
 `page_down`, `home`, `last`), `select`, `edit`, `reason`, `save`, `discard`,
 `refresh`, `filter`, `sort`, `quit`, and `key` with a key name and optional UTF-8
@@ -146,7 +181,19 @@ which. Normal interactive quit exits 0 after displaying any operation errors.
 The optional GUI frame path writes a P6 PPM image only when explicitly supplied.
 No default screenshot or workbook file is written.
 
+The additive `editor` object contains `active`, `prompt`, unsubmitted `text` and
+`input_rejected`, so failures do not conceal the retained input buffer. `sheet`
+snapshots and the final row list remain published values, not staged/editor data.
+
 `make test` covers frontend parity, read-only evidence, schema/type failures,
 UTF-8 input, rendering and resizing, pointer capture, append-only saves, hooks,
 stale writers, real PTY input/restoration, and SDL dummy-driver window creation
 when SDL2 was enabled. This is not a claim of testing every desktop/compositor.
+
+Typed staging, source-meaning invariants, script admission and review outcomes
+live in On1x (`src/worksheet_policy.on1x`, `src/worksheet.on1x` and
+`src/poindexter.on1x`). C11 owns snapshots, JSON scalars and frontend resources.
+The completion patch is approximately 41% C11 / 59% On1x (107/154 nonblank,
+noncomment implementation lines), excluding headers, imports, FFI declarations,
+tests, documentation and generated/vendor code. No new dependency or ledger
+migration is required; valid documented v1 event scripts remain usable.

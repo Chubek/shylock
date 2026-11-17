@@ -115,7 +115,7 @@ int shy_tui_render(void)
     ok = ok && text(1, height-5, width-2, value, heading) && text(1, height-4, width-2, shy_sheet_message(), normal);
     if (shy_ui_editing()) {
         ok = ok && text(1, height-3, width-2, shy_ui_prompt(), heading) && text(1, height-2, width-2, shy_ui_editor(), normal);
-    } else ok = ok && text(1, height-2, width-2, "Changes publish new review revisions. Amount, currency, scale and provenance are read-only.", normal);
+    } else ok = ok && text(1, height-2, width-2, "Amounts, scale and source evidence stay read-only. Resolve unknown context explicitly.", normal);
     if (!ok) return 0;
     mulib_strbuf_t output; mulib_strbuf_init(&output);
     /* Extension audit lines or a write failure may have changed the terminal. */
@@ -145,9 +145,9 @@ static int key(shy_ui_event *out, const mulib_termkey_event_t *event)
                     if (need > length-pos && length-pos < sizeof paste_tail) {
                         paste_length = length-pos; memcpy(paste_tail, data+pos, paste_length); break;
                     }
-                    ++pos; continue;
+                    (void)shy_ui_key(out,"text","\xff"); ++pos; continue;
                 }
-                if (scalar >= 32 && scalar != 127) {
+                {
                     char text[5]; memcpy(text, data+pos, used); text[used] = 0;
                     (void)shy_ui_key(out, "text", text);
                 }
@@ -157,6 +157,7 @@ static int key(shy_ui_event *out, const mulib_termkey_event_t *event)
         return 1;
     }
     if (event->type == MULIB_TERMKEY_PASTE_BEGIN || event->type == MULIB_TERMKEY_PASTE_END) {
+        if (event->type==MULIB_TERMKEY_PASTE_END && paste_length && shy_ui_editing()) (void)shy_ui_key(out,"text","\xff");
         paste_length = 0; return 1;
     }
     if (event->type != MULIB_TERMKEY_KEY) return 1;
