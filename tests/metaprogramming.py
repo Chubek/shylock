@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix="shylock-ppx-") as directory:
         # Reconstruction must still undergo ordinary On1x type checking.
         ('@fields("closed", 42, -1, "x:string")', "expected string"),
     ):
-        source.write_text('''
+        source.write_text('import "' + str(Path(__file__).resolve().parents[1] / "src/ppx/fields_runtime.on1x") + '";\n' + '''
 extern fn shy_document_has(s:string,i:i64,k:string,t:string)->i64;
 extern fn shy_document_size(s:string,i:i64,k:string)->i64;
 fn main() { println(''' + expression + '''); }

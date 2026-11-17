@@ -49,7 +49,7 @@ CORE_NATIVE := src/bridge.c src/document.c src/engine.c src/context.c src/latex.
 NATIVE := $(CORE_NATIVE) $(PLUGIN_NATIVE) $(BUILD)/builtin_plugins.c
 CORE_HEADERS := $(wildcard src/*.h) include/shylock-sdk.h
 HEADERS := $(CORE_HEADERS) $(PLUGIN_HEADERS)
-ON1X_SOURCES := $(wildcard src/*.on1x) $(PLUGIN_ON1X)
+ON1X_SOURCES := $(wildcard src/*.on1x) src/ppx/fields_runtime.on1x $(PLUGIN_ON1X)
 NATIVE_FLAGS := -ldl $(PLUGIN_FLAGS)
 $(BUILD)/native-config.json: FORCE tools/native_config.py $(PLUGIN_MANIFESTS)
 	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(NATIVE_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)" "$(ENABLED_PLUGINS)"
@@ -90,7 +90,7 @@ $(BUILD)/shylock-worker: src/worker.on1x src/worker.c $(VM_NATIVE) $(CORE_HEADER
 	  --mulib mune --mulib json --mulib cryptohash \
 	  $(foreach file,$(VM_NATIVE) src/worker.c,--extra-c $(file)) -o "$@"
 
-$(BUILD)/native-tests: tests/native.on1x tests/naive_policy.on1x $(PLUGIN_ON1X) tests/native.c tests/intelligence.c tests/naive.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/ppx-fields $(BUILD)/native-config.json Makefile
+$(BUILD)/native-tests: tests/native.on1x tests/naive_policy.on1x src/ppx/fields_runtime.on1x $(PLUGIN_ON1X) tests/native.c tests/intelligence.c tests/naive.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/ppx-fields $(BUILD)/native-config.json Makefile
 	ON1X_PPX_SCHEMA="$(abspath $(ON1X)/grammar/PPX.schema.json)" \
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --ppx fields "$(abspath $(BUILD)/ppx-fields)" --ppx-timeout-ms "$(PPX_TIMEOUT_MS)" \
@@ -105,7 +105,7 @@ $(BUILD)/sandbox-probes: tests/sandbox_probe.c src/sandbox_os.c src/sandbox.h sr
 	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WORKER_CFLAGS) -I"$(MULIB)/include" \
 	  tests/sandbox_probe.c src/sandbox_os.c -o "$@"
 
-$(BUILD)/metaprogramming-tests: tests/metaprogramming.on1x src/demand_macros.on1x $(BUILD)/ppx-fields $(ON1XC) Makefile
+$(BUILD)/metaprogramming-tests: tests/metaprogramming.on1x src/demand_macros.on1x src/ppx/fields_runtime.on1x $(BUILD)/ppx-fields $(ON1XC) Makefile
 	ON1X_PPX_SCHEMA="$(abspath $(ON1X)/grammar/PPX.schema.json)" \
 	  $(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
 	  --stdlib "$(ON1X)/stdlib" --ppx fields "$(abspath $(BUILD)/ppx-fields)" \

@@ -1,9 +1,21 @@
 import "../src/demand_macros.on1x";
+import "../src/ppx/fields_runtime.on1x";
 
 fn shy_error(message:string)->i64 { println(message); return 2; }
 fn shy_json_quote(text:string)->string { return text_concat(text_concat("\"",text),"\""); }
-fn shy_document_has(section:string,index:i64,key:string,kind:string)->i64 { return 1; }
-fn shy_document_size(section:string,index:i64,key:string)->i64 { return 1; }
+fn shy_document_has(section:string,index:i64,key:string,kind:string)->i64 {
+  if section=="fixture" {
+    if key=="" && kind=="object" { return 1; }
+    if key=="na|me" && kind=="string" { return 1; }
+    if key=="x;" && kind=="integer" { return 1; }
+    return 0;
+  }
+  return 1;
+}
+fn shy_document_size(section:string,index:i64,key:string)->i64 {
+  if section=="fixture" { return 2; }
+  return 1;
+}
 fn section_once()->string { println("section"); return "rows"; }
 fn index_once()->i64 { println("index"); return 0; }
 fn condition_once()->bool { println("condition"); return true; }
@@ -27,6 +39,10 @@ fn main()->i64 {
   assert(@fields("closed",section_once(),index_once(),"field:string"));
   assert(@fields("closed","",-1,"flag:boolean"));
   assert(@fields("closed","",-1,"expected:null"));
+  assert(@fields("closed","fixture",-1,"na|me:string","x;:integer"));
+  assert(!@fields("closed","fixture",-1,"na|me:string"));
+  assert(!@fields("closed","fixture",-1,"na|me:string","x;:string"));
+  assert(!@fields("closed","fixture",-1,"na|me:string","absent:integer"));
   assert(on1x_ppx_1==99 && on1x_ppx_2==100);
   let (status,text)=hygiene();
   assert(status==2 && text=="");

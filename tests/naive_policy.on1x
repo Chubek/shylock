@@ -1,4 +1,5 @@
 import "../plugins/dragnet/dragnet_rules.on1x";
+import "../src/ppx/fields_runtime.on1x";
 import "../plugins/dragnet/dragnet_strategy.on1x";
 import "../plugins/dragnet/dragnet_rank.on1x";
 import "../plugins/dragnet/dragnet_policy.on1x";

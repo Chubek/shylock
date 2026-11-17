@@ -1,0 +1,22 @@
+# Runtime half of the local fields PPX. Domain schemas remain at their On1x
+# call sites; the generic document adapter supplies structural facts only.
+fn shy_fields_closed(section:string,index:i64,spec:string)->bool {
+  if shy_document_has(section,index,"","object")!=1 { return false; }
+  var offset=0; var fields=0;
+  while offset<text_len(spec) {
+    var size=0;
+    while offset<text_len(spec) && text_byte(spec,offset)!=58 {
+      let c=text_byte(spec,offset);
+      if c<48 || c>57 || size>text_len(spec) { return false; }
+      size=size*10+c-48; offset=offset+1;
+    }
+    offset=offset+1;
+    let end=offset+size; var colon=offset;
+    if size<3 || end>text_len(spec) { return false; }
+    while colon<end && text_byte(spec,colon)!=58 { colon=colon+1; }
+    if colon==offset || colon>=end { return false; }
+    if shy_document_has(section,index,text_slice(spec,offset,colon),text_slice(spec,colon+1,end))!=1 { return false; }
+    fields=fields+1; offset=end;
+  }
+  return shy_document_size(section,index,"")==fields;
+}

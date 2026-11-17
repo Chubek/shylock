@@ -1,5 +1,11 @@
 fn dragnet_help(topic:string,color:bool)->bool {
   if topic=="" { help_heading("Dragnet: discovery and saved evidence",color); }
+  if help_entry(topic,color,"daemon","daemon CONFIG_JSON [--foreground|--detach|--once]",
+    "Periodically discover listings and extract configured price evidence.",
+    "  CONFIG_JSON  shylock.daemon/v1 query, interval, hosts and NaiveFinder rule.\n  MODE         Foreground by default; detach starts a background daemon.\n               --once performs one run and returns its outcome.",
+    "  Paths resolve relative to the config. Live access requires allow_network.\n  Stores immutable run folders under output; one writer per output directory.\n  SIGTERM/SIGINT stop gracefully. Read output/daemon.pid for the supervisor PID.",
+    "  ./shylock daemon plugins/dragnet/daemon-offline.json --once\n  ./shylock daemon query.json --foreground\n  ./shylock daemon query.json --detach",
+    "manual/dragnet-daemon.md") { return true; }
   if help_entry(topic,color,"discover","discover PROVIDER QUERY [SERP_HTML [LIMIT]]",
     "Discover listing URLs with an ElviScrape provider.",
     "  PROVIDER   Trusted .elvs provider name, e.g. google or bing.\n  QUERY      Nonempty search text; quote it when it contains spaces.\n  SERP_HTML  Saved search response; omitted or '' requests live HTTPS.\n  LIMIT      1..64, default 10; clamped to the provider's limit.",

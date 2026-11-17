@@ -1,5 +1,9 @@
 # Dragnet: ElviScrape discovery, snapshots and deterministic extraction
 
+For scheduled queries followed by configured listing acquisition and extraction,
+see the [Dragnet daemon](dragnet-daemon.md). Its separate JSON config selects the
+interval, exact listing hosts, NaiveFinder rule and live/offline acquisition mode.
+
 For the integrated DOM-aware, On1x-interpreted JSON rule engine, use
 [`find-rule` / NaiveFinder](dragnet-naive.md). It adds container-scoped listing,
 regex/attribute extraction, checked locale policies, inspection ranking, conflict

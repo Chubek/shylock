@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 CORE = set("help plugins extract extension extension-replay formula-test print-report "
            "forecast quote price optimize-model estimate backtest recommend optimize demand adjust".split())
-DRAGNET = set("discover discover-replay discover-many capture snapshot extract-snapshot "
+DRAGNET = set("daemon discover discover-replay discover-many capture snapshot extract-snapshot "
               "flatten find find-rule find-rule-replay collect collect-replay browse "
               "openai-account model-extract".split())
 POINDEXTER = set("review reject revise ledger history replay series cohort forecast-ledger "

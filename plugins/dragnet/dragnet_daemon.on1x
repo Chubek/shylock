@@ -1,0 +1,245 @@
+# Admission, acquisition selection, scheduling and run outcomes belong to On1x.
+# Native primitives only own processes, clocks, signals, locks and file sinks.
+extern fn shy_daemon_read(path:string)->string;
+extern fn shy_daemon_absolute(path:string)->string;
+extern fn shy_daemon_host(url:string)->string;
+extern fn shy_daemon_start(directory:string,detach:i64)->i64;
+extern fn shy_daemon_close()->i64;
+extern fn shy_daemon_stopping()->i64;
+extern fn shy_daemon_wait(seconds:i64)->i64;
+extern fn shy_daemon_time()->i64;
+extern fn shy_daemon_run()->string;
+extern fn shy_daemon_sink(directory:string,name:string)->i64;
+extern fn shy_daemon_commit()->i64;
+extern fn shy_daemon_write(directory:string,name:string,value:string)->i64;
+extern fn shy_daemon_fork()->i64;
+extern fn shy_daemon_reap()->i64;
+extern fn shy_daemon_exit(code:i64)->i64;
+
+fn daemon_json_string(out:buffer,key:string,value:string) {
+  buffer_append(out,shy_json_quote(key)); buffer_append(out,":");
+  buffer_append(out,shy_json_quote(value));
+}
+fn daemon_json_integer(out:buffer,key:string,value:i64) {
+  buffer_append(out,shy_json_quote(key)); buffer_append(out,":");
+  buffer_append(out,nf_integer(value));
+}
+
+fn daemon_path(directory:string,path:string)->string {
+  if path=="" { return ""; }
+  return Path.basis_path_join(directory,path);
+}
+fn daemon_host_selected(hosts:sexpr,host:string)->bool {
+  var rest=hosts;
+  while sx_kind(rest)==3 {
+    if sx_text(sx_head(rest))==host { return true; }
+    rest=sx_tail(rest);
+  }
+  return false;
+}
+fn daemon_config_valid(raw:string)->bool {
+  if !nf_unique_rule_keys(raw) ||
+    !@fields("closed","",-1,"schema:string","provider:string","query:string","limit:integer",
+      "interval_seconds:integer","allow_network:boolean","capture:string","output:string",
+      "rule:string","target:string","hosts:array","pages:array") ||
+    shy_document_text("",-1,"schema")!="shylock.daemon/v1" { return false; }
+  let provider=shy_document_text("",-1,"provider");
+  if provider=="" || text_len(provider)>64 { return false; }
+  var i=0;
+  while i<text_len(provider) {
+    let c=text_byte(provider,i);
+    if !((c>=97 && c<=122) || (c>=48 && c<=57) || c==45 || c==95) { return false; }
+    i=i+1;
+  }
+  let query=shy_document_text("",-1,"query");
+  let target=shy_document_text("",-1,"target");
+  let rule_path=shy_document_text("",-1,"rule");
+  let output=shy_document_text("",-1,"output");
+  let capture=shy_document_text("",-1,"capture");
+  let limit=shy_document_number("",-1,"limit");
+  let interval=shy_document_number("",-1,"interval_seconds");
+  if query=="" || text_len(query)>2048 || target=="" || text_len(target)>128 ||
+    rule_path=="" || text_len(rule_path)>4096 || output=="" || text_len(output)>4096 ||
+    text_len(capture)>4096 || limit<1 || limit>64 || interval<1 || interval>604800 ||
+    (capture=="" && shy_document_boolean("",-1,"allow_network")!=1) { return false; }
+  let count=shy_document_size("",-1,"hosts");
+  if count<1 || count>32 || shy_document_size("",-1,"pages")>64 { return false; }
+  var hosts=sx_nil(); i=0;
+  while i<count {
+    if shy_document_has("hosts",i,"","string")!=1 { return false; }
+    let host=text_concat("",shy_document_text("hosts",i,""));
+    if host=="" || text_len(host)>253 || daemon_host_selected(hosts,host) ||
+      shy_daemon_host(text_concat("https://",text_concat(host,"/")))!=host { return false; }
+    hosts=sx_cons(sx_string(host),hosts); i=i+1;
+  }
+  i=0;
+  while i<shy_document_size("",-1,"pages") {
+    if !@fields("closed","pages",i,"url:string","path:string","captured_at:integer") { return false; }
+    let url=text_concat("",shy_document_text("pages",i,"url"));
+    let path=shy_document_text("pages",i,"path");
+    if text_len(url)>4096 || !daemon_host_selected(hosts,shy_daemon_host(url)) || path=="" ||
+      text_len(path)>4096 || shy_document_number("pages",i,"captured_at")>253402300799 { return false; }
+    var j=0;
+    while j<i { if shy_document_text("pages",j,"url")==url { return false; } j=j+1; }
+    i=i+1;
+  }
+  return true;
+}
+fn daemon_options(directory:string)->(sexpr,sexpr,sexpr) {
+  var options=sx_nil(); var hosts=sx_nil(); var pages=sx_nil();
+  options=nf_put(options,"provider",shy_document_text("",-1,"provider"));
+  options=nf_put(options,"query",shy_document_text("",-1,"query"));
+  options=nf_put(options,"target",shy_document_text("",-1,"target"));
+  options=nf_put(options,"limit",nf_integer(shy_document_number("",-1,"limit")));
+  options=nf_put(options,"interval",nf_integer(shy_document_number("",-1,"interval_seconds")));
+  options=nf_put(options,"network",nf_integer(shy_document_boolean("",-1,"allow_network")));
+  options=nf_put(options,"capture",daemon_path(directory,shy_document_text("",-1,"capture")));
+  options=nf_put(options,"rule",daemon_path(directory,shy_document_text("",-1,"rule")));
+  options=nf_put(options,"output",daemon_path(directory,shy_document_text("",-1,"output")));
+  var i=0;
+  while i<shy_document_size("",-1,"hosts") {
+    hosts=sx_cons(sx_string(shy_document_text("hosts",i,"")),hosts); i=i+1;
+  }
+  i=0;
+  while i<shy_document_size("",-1,"pages") {
+    var page=nf_put(sx_nil(),"url",shy_document_text("pages",i,"url"));
+    page=nf_put(page,"path",daemon_path(directory,shy_document_text("pages",i,"path")));
+    page=nf_put(page,"time",nf_integer(shy_document_number("pages",i,"captured_at")));
+    pages=sx_cons(page,pages); i=i+1;
+  }
+  return (options,hosts,pages);
+}
+fn daemon_saved(pages:sexpr,url:string)->sexpr {
+  var rest=pages;
+  while sx_kind(rest)==3 {
+    let page=sx_head(rest);
+    if nf_get(page,"url")==url { return page; }
+    rest=sx_tail(rest);
+  }
+  return sx_nil();
+}
+# Returns status and persisted snapshot/extraction names. Empty names mean that
+# no complete artifact exists; a failed extraction never becomes numeric data.
+fn daemon_listing(directory:string,index:i64,url:string,options:sexpr,hosts:sexpr,pages:sexpr)->(string,string,string) {
+  if !daemon_host_selected(hosts,shy_daemon_host(url)) { return ("skipped_host","",""); }
+  let page=daemon_saved(pages,url); let saved=nf_get(page,"path");
+  if saved=="" && nf_number(options,"network")!=1 { return ("skipped_offline","",""); }
+  var time=shy_daemon_time();
+  if saved!="" { time=nf_number(page,"time"); }
+  let stem=text_concat("hit-",nf_integer(index));
+  let snapshot=text_concat(stem,"-snapshot.json");
+  let extraction=text_concat(stem,"-prices.json");
+  if shy_daemon_sink(directory,snapshot)!=1 { return ("storage_error","",""); }
+  let captured=dragnet_snapshot(url,time,saved);
+  let stored=shy_daemon_commit();
+  if stored==0 { return ("storage_error","",""); }
+  if captured!=0 || stored!=1 { return ("snapshot_error","",""); }
+  if shy_daemon_stopping()==1 { return ("interrupted",snapshot,""); }
+  if shy_daemon_sink(directory,extraction)!=1 { return ("storage_error",snapshot,""); }
+  let found=naive_find(daemon_path(directory,snapshot),daemon_path(directory,"rule.json"),
+    nf_get(options,"target"),"deterministic","",false);
+  let published=shy_daemon_commit();
+  if published==0 { return ("storage_error",snapshot,""); }
+  if published!=1 { return ("extraction_error",snapshot,""); }
+  if found!=0 { return ("partial_extraction",snapshot,extraction); }
+  return ("needs_review",snapshot,extraction);
+}
+fn daemon_cycle(options:sexpr,hosts:sexpr,pages:sexpr,config:string,rule_source:string,root:string)->i64 {
+  let started=shy_daemon_time();
+  let directory=text_concat("",shy_daemon_run());
+  if directory=="" || shy_daemon_write(directory,"config.json",config)!=1 ||
+    shy_daemon_write(directory,"rule.json",rule_source)!=1 { return 3; }
+  if shy_daemon_sink(directory,"discovery.json")!=1 { return 3; }
+  let discovery_status=dragnet_discover(nf_get(options,"provider"),nf_get(options,"query"),
+    nf_get(options,"capture"),root,nf_number(options,"limit"));
+  let committed=shy_daemon_commit();
+  if committed==0 { return 3; }
+  var hits=sx_nil(); var discovery_id=""; var discovery="";
+  if committed==1 {
+    discovery="discovery.json";
+    if shy_document_open(daemon_path(directory,discovery))!=1 { return 3; }
+    discovery_id=text_concat("",shy_document_text("",-1,"discovery_id"));
+    var i=0;
+    if discovery_status==0 {
+      while i<shy_document_size("",-1,"hits") {
+        hits=sx_cons(sx_string(shy_document_text("hits",i,"url")),hits); i=i+1;
+      }
+    }
+    shy_document_close(); hits=NL.basis_list_rev(hits);
+  }
+  let entries=buffer_new(); var i=0; var failures=0; var selected=0;
+  var rest=hits; var storage_failed=false;
+  while sx_kind(rest)==3 && shy_daemon_stopping()==0 && !storage_failed {
+    let url=sx_text(sx_head(rest)); rest=sx_tail(rest);
+    let (status,snapshot,extraction)=daemon_listing(directory,i,url,options,hosts,pages);
+    if status!="skipped_host" && status!="skipped_offline" { selected=selected+1; }
+    if status=="snapshot_error" || status=="extraction_error" || status=="partial_extraction" ||
+      status=="storage_error" { failures=failures+1; }
+    if status=="storage_error" { storage_failed=true; }
+    if i>0 { buffer_append(entries,","); }
+    buffer_append(entries,"{"); daemon_json_integer(entries,"hit",i); buffer_append(entries,",");
+    daemon_json_string(entries,"url",url); buffer_append(entries,",");
+    daemon_json_string(entries,"status",status); buffer_append(entries,",");
+    daemon_json_string(entries,"snapshot",snapshot); buffer_append(entries,",");
+    daemon_json_string(entries,"extraction",extraction); buffer_append(entries,"}"); i=i+1;
+    if shy_document_ok()!=1 { return 3; }
+  }
+  var status="complete"; var result=0;
+  if selected==0 { status="no_selected_hits"; }
+  if discovery_status!=0 || committed!=1 { status="discovery_error"; result=2; }
+  if failures>0 { status="partial_failure"; result=2; }
+  if shy_daemon_stopping()==1 { status="interrupted"; result=2; }
+  if storage_failed { status="storage_error"; result=3; }
+  let audit=buffer_new(); buffer_append(audit,"{\"schema\":\"shylock.daemon-run/v1\",");
+  daemon_json_string(audit,"status",status); buffer_append(audit,",");
+  daemon_json_string(audit,"schedule","fixed-delay-after-completion/v1"); buffer_append(audit,",");
+  daemon_json_integer(audit,"started_at",started); buffer_append(audit,",");
+  daemon_json_integer(audit,"finished_at",shy_daemon_time()); buffer_append(audit,",");
+  daemon_json_integer(audit,"selected",selected); buffer_append(audit,",");
+  daemon_json_integer(audit,"failed",failures); buffer_append(audit,",");
+  daemon_json_string(audit,"discovery",discovery); buffer_append(audit,",");
+  daemon_json_string(audit,"discovery_id",discovery_id);
+  buffer_append(audit,",\"config\":\"config.json\",\"rule\":\"rule.json\",\"entries\":[");
+  buffer_append(audit,buffer_text(entries)); buffer_append(audit,"]}");
+  if shy_document_ok()!=1 || shy_daemon_write(directory,"run.json",buffer_text(audit))!=1 { return 3; }
+  return result;
+}
+fn dragnet_daemon(path:string,mode:string,root:string)->i64 {
+  if mode!="--foreground" && mode!="--detach" && mode!="--once" { return shy_error("daemon mode must be --foreground, --detach or --once"); }
+  let absolute=text_concat("",shy_daemon_absolute(path));
+  let raw=text_concat("",shy_daemon_read(absolute));
+  if absolute=="" || shy_document_parse(raw)!=1 || !daemon_config_valid(raw) {
+    shy_document_close(); shy_daemon_close(); return shy_error("invalid daemon configuration");
+  }
+  let (options,hosts,pages)=daemon_options(Path.basis_path_dir(absolute)); shy_document_close();
+  let rule_source=text_concat("",shy_daemon_read(nf_get(options,"rule")));
+  if shy_document_parse(rule_source)!=1 {
+    shy_daemon_close(); return shy_error("cannot read daemon extraction rule");
+  }
+  let rule_host=text_concat("",shy_document_text("",-1,"host"));
+  var rule_ok=nf_rule_valid_for(nf_get(options,"target"),rule_source,rule_host);
+  var rest=hosts;
+  while sx_kind(rest)==3 {
+    if rule_host!="*" && rule_host!=sx_text(sx_head(rest)) { rule_ok=false; }
+    rest=sx_tail(rest);
+  }
+  shy_document_close();
+  if !rule_ok { shy_daemon_close(); return shy_error("invalid daemon extraction rule or allowed-host mismatch"); }
+  var detach=0; if mode=="--detach" { detach=1; }
+  let started=shy_daemon_start(nf_get(options,"output"),detach);
+  if started<0 { shy_daemon_close(); return shy_error("cannot start daemon: output directory, writer lock or process setup failed"); }
+  if started==0 { return 0; }
+  var result=0; var running=true;
+  while running && shy_daemon_stopping()==0 {
+    let forked=shy_daemon_fork();
+    if forked==1 { return shy_daemon_exit(daemon_cycle(options,hosts,pages,raw,rule_source,root)); }
+    if forked<0 { result=2; running=false; }
+    else {
+      let code=shy_daemon_reap();
+      if code!=0 && code!=2 { result=shy_error("daemon run aborted or storage failed; inspect incomplete run folder"); running=false; }
+      if mode=="--once" { if code!=0 { result=2; } running=false; }
+    }
+    if running && shy_daemon_wait(nf_number(options,"interval"))<0 { result=2; running=false; }
+  }
+  shy_daemon_close(); return result;
+}

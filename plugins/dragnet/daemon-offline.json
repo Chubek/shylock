@@ -1,0 +1,20 @@
+{
+  "schema": "shylock.daemon/v1",
+  "provider": "google",
+  "query": "lake cottage nightly price",
+  "limit": 10,
+  "interval_seconds": 3600,
+  "allow_network": false,
+  "capture": "../../tests/fixtures/google.html",
+  "output": "../../dragnet-runs",
+  "rule": "rules/rental.json",
+  "target": "rental_price",
+  "hosts": ["example.org"],
+  "pages": [
+    {
+      "url": "https://example.org/cottage",
+      "path": "../../tests/fixtures/naive-rentals.html",
+      "captured_at": 1760000000
+    }
+  ]
+}

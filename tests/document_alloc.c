@@ -7,6 +7,7 @@
 #include "../plugins/dragnet/intelligence.h"
 #include "../plugins/dragnet/naive.h"
 #include "../plugins/dragnet/collection.h"
+#include "../plugins/dragnet/daemon.h"
 #include "../plugins/poindexter/sheet.h"
 #include "mulib-elvi-scrape.h"
 #include <stdio.h>
@@ -172,7 +173,15 @@ int64_t shy_document_allocation_test(void)
         if ((injected && result != 2) || (!injected && result != 0)) ok = 0;
         shy_document_close(); shy_document_close();
     }
-    fault = 0; shy_document_close(); unlink(path);
+    fault = 0; shy_document_close();
+    /* The daemon's only heap-owning OS accessor discards the previous borrowed
+       buffer on read/allocation failure and remains closeable twice. */
+    if (!*shy_daemon_read(path)) ok=0;
+    calls=0; injected=0; fault=1;
+    int daemon_failed=!*shy_daemon_read(path);
+    fault=0;
+    if (!daemon_failed || !injected || !*shy_daemon_read(path)) ok=0;
+    shy_daemon_close(); shy_daemon_close(); unlink(path);
     for (size_t at = 1; ok && at <= 128; ++at) {
         calls = 0; injected = 0; fault = at;
         int success = shy_latex_begin("A&B") && shy_latex_append(1, "Calculation") &&

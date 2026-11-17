@@ -15,6 +15,7 @@ __pycache__/
 # Local archives and scratch captures
 /shylock.zip
 /captures/
+/dragnet-runs/
 /extensions/monitor-state.db
 /extensions/monitor-state.db.lock
 

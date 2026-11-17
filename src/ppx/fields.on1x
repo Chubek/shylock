@@ -5,10 +5,6 @@ import std.visitor.visitor as V;
 # @fields("closed", section, index, "key:type", ...) checks a closed JSON
 # object through the scalar document adapter. Introduced names are fresh and
 # section/index evaluate once. This is syntax generation, not type derivation.
-fn fields_binary(op:string,a:sexpr,b:sexpr,at:sexpr)->sexpr {
-  return P.ppx_node("Binary",P.ppx_list4(sx_symbol(op),a,b,at));
-}
-
 fn fields_string(value:string,at:sexpr)->sexpr {
   return P.ppx_node("StringLiteral",P.ppx_list2(sx_string(value),at));
 }
@@ -26,11 +22,7 @@ fn fields_transform(tree:sexpr,label:string)->sexpr {
     }
     let s=P.ppx_ident(section,at);
     let i=P.ppx_ident(index,at);
-    let empty=fields_string("",at);
-    var check=fields_binary("==",P.ppx_call("shy_document_has",
-      P.ppx_list4(s,i,empty,fields_string("object",at)),at),P.ppx_integer("1",at),at);
-    check=fields_binary("&&",check,fields_binary("==",P.ppx_call("shy_document_size",
-      P.ppx_list3(s,i,empty),at),P.ppx_integer(SX.sexpr_nat(count-2),at),at),at);
+    let descriptors=buffer_new();
     var rest=sx_tail(sx_tail(args));
     var seen=sx_nil();
     while sx_kind(rest)==3 {
@@ -51,13 +43,17 @@ fn fields_transform(tree:sexpr,label:string)->sexpr {
         names=sx_tail(names);
       }
       seen=sx_cons(sx_string(key),seen);
-      let has=P.ppx_call("shy_document_has",P.ppx_list4(s,i,fields_string(key,at),fields_string(kind,at)),at);
-      check=fields_binary("&&",check,fields_binary("==",has,P.ppx_integer("1",at),at),at);
+      # Length prefixes preserve arbitrary key bytes without delimiter aliases.
+      # A compact runtime loop avoids expanding hundreds of checks into a full
+      # program AST larger than the pinned compiler's 262144-node wire limit.
+      buffer_append(descriptors,SX.sexpr_nat(text_len(text)));
+      buffer_append(descriptors,":"); buffer_append(descriptors,text);
       rest=sx_tail(rest);
     }
     let params=P.ppx_list2(
       P.ppx_node("Parameter",P.ppx_list3(sx_string(section),P.ppx_node("StringType",sx_nil()),at)),
       P.ppx_node("Parameter",P.ppx_list3(sx_string(index),P.ppx_node("I64Type",sx_nil()),at)));
+    let check=P.ppx_call("shy_fields_closed",P.ppx_list3(s,i,fields_string(buffer_text(descriptors),at)),at);
     let body=P.ppx_node("Block",P.ppx_list2(P.ppx_list1(P.ppx_node("Return",P.ppx_list2(check,at))),at));
     let lambda=P.ppx_node("Lambda",P.ppx_list4(params,P.ppx_node("BoolType",sx_nil()),body,at));
     return P.ppx_node("Call",P.ppx_list3(lambda,P.ppx_list2(sx_head(args),SX.sexpr_nth(args,1)),at));

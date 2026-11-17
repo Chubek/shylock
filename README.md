@@ -119,6 +119,21 @@ It checks native symbols, linked libraries, commands and extension-event admissi
 
 ## Discover, capture, and extract
 
+For periodic Elvi queries and JSON-configured price extraction, use the
+[Dragnet daemon](manual/dragnet-daemon.md):
+
+```sh
+./shylock daemon plugins/dragnet/daemon-offline.json --once
+./shylock daemon query.json --detach
+```
+
+The shipped config runs offline. Live configs select a query, interval, exact
+listing hosts and NaiveFinder rule. Results are retained in immutable run folders;
+foreground service-manager mode, PID locking and graceful shutdown are supported.
+This uses the existing POSIX/Linux dependencies. The local fields PPX now uses
+`src/ppx/fields_runtime.on1x` for compact structural checks within the pinned
+compiler's AST limit; standalone PPX clients must import that helper.
+
 ```sh
 ./shylock discover google 'lake cottage' tests/fixtures/google.html
 ./shylock discover bing 'lake cottage' tests/fixtures/bing.html

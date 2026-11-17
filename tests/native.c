@@ -4,6 +4,7 @@
 #include "../src/latex.h"
 #include "../src/engine.h"
 #include "../plugins/dragnet/dragnet.h"
+#include "../plugins/dragnet/daemon.h"
 #include "mulib-kvdb.h"
 #include "mulib-elvi-scrape.h"
 #include "detail/mulib-webscan.h"
@@ -12,6 +13,7 @@
 #include <SDL.h>
 #endif
 #include <stdio.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -176,8 +178,42 @@ int64_t shy_native_engine_test(void)
 
 static int fixture_resolve(void *context,const char *host,char address[16])
 { (void)host; strcpy(address,context); return 1; }
+static int daemon_resources(void)
+{
+    char directory[]="/tmp/opencode/shylock-daemon-native-XXXXXX",run[4096],path[8192];
+    if (!mkdtemp(directory)) return 0;
+    int ok=shy_daemon_start(directory,0)==1;
+    snprintf(run,sizeof run,"%s",shy_daemon_run());
+    if (!*run || !shy_daemon_write(run,"value.json","{\"value\":1}") ||
+        shy_daemon_write(run,"value.json","{\"value\":2}") ||
+        shy_daemon_sink(run,"../outside") || shy_daemon_sink("wrong-directory","value.json")) ok=0;
+    snprintf(path,sizeof path,"%s/value.json",run);
+    if (strcmp(shy_daemon_read(path),"{\"value\":1}")) ok=0;
+    if (!shy_daemon_sink(run,"empty.json") || shy_daemon_commit()!=2) ok=0;
+    if (!shy_daemon_sink(run,"abandoned.json")) ok=0;
+    shy_daemon_close(); shy_daemon_close();
+    snprintf(path,sizeof path,"%s/abandoned.json.part",run);
+    if (!access(path,F_OK)) ok=0;
+    snprintf(path,sizeof path,"%s/empty.json",run);
+    if (!access(path,F_OK)) ok=0;
+    /* A clean subsequent session must acquire the same inode and restore I/O. */
+    if (shy_daemon_start(directory,0)!=1) ok=0;
+    /* Signal delivery while a run is active must reach and reap that worker,
+       rather than merely setting the idle supervisor's stop flag. */
+    int64_t forked=shy_daemon_fork();
+    if (forked==1) shy_daemon_exit(shy_daemon_wait(10)==0 ? 0 : 2);
+    if (forked<0) ok=0;
+    else {
+        if (kill(getpid(),SIGTERM)<0 || shy_daemon_reap()!=0 || !shy_daemon_stopping()) ok=0;
+    }
+    shy_daemon_close();
+    snprintf(path,sizeof path,"%s/value.json",run); unlink(path); rmdir(run);
+    snprintf(path,sizeof path,"%s/daemon.pid",directory); unlink(path); rmdir(directory);
+    return ok;
+}
 int64_t shy_native_dragnet_test(void)
 {
+    if (!daemon_resources()) return 0;
     mulib_elvi_scrape_program_t program;
     if (!mulib_elvi_scrape_load("third_party/mulib/library/elvi-scrape/google.elvs",&program,NULL)) return 0;
     const char prefix[]="<a href='https://example.org/'><h3>Safe</h3></a>";

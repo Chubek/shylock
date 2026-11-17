@@ -13,3 +13,8 @@ ifeq ($(strip $(OPENAI_TLS_FLAGS)),)
 OPENAI_TLS_FLAGS := -lssl -lcrypto
 endif
 PLUGIN_FLAGS += $(OPENAI_TLS_FLAGS)
+
+.PHONY: test-dragnet-daemon
+test: test-dragnet-daemon
+test-dragnet-daemon: $(BUILD)/shylock
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/daemon.py

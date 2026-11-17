@@ -144,7 +144,10 @@ fn nf_unique_rule_keys(source:string)->bool {
   return true;
 }
 fn nf_rule_valid(target:string)->bool {
-  if !nf_unique_rule_keys(shy_naive_rule()) { return false; }
+  return nf_rule_valid_for(target,shy_naive_rule(),shy_naive_meta("host"));
+}
+fn nf_rule_valid_for(target:string,rule_source:string,source_host:string)->bool {
+  if !nf_unique_rule_keys(rule_source) { return false; }
   if !@fields("closed","",-1,"schema:string","host:string","target:string","container:string","listing:object","fields:array",
     "currency:string","currency_source:string","decimal_separator:string","group_separator:string",
     "maximum_candidates:integer","maximum_containers:integer","include_existing:boolean","fallback:string") ||
@@ -158,7 +161,7 @@ fn nf_rule_valid(target:string)->bool {
   let group=shy_document_text("",-1,"group_separator");
   let count=shy_document_size("",-1,"fields");
   if target=="" || target!=declared_target || text_len(target)>128 || text_len(host)>253 ||
-    (host!="*" && host!=shy_naive_meta("host")) ||
+    (host!="*" && host!=source_host) ||
     !nf_selector(shy_document_text("",-1,"container")) ||
     (fallback!="none" && fallback!="model_review") || count<1 || count>32 ||
     shy_document_number("",-1,"maximum_candidates")<1 || shy_document_number("",-1,"maximum_candidates")>256 ||
