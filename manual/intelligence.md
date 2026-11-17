@@ -84,6 +84,12 @@ prove replay consistency, not signatures or authenticated capture time.
 
 ## Simple matching without a model
 
+For DOM-scoped listing rules, adjacent billing labels, locale-aware money,
+same-page reconciliation and verified review, see [NaiveFinder](dragnet-naive.md):
+`./shylock find-rule snapshot.json plugins/dragnet/rules/rental.json rental_price`.
+Its default is deterministic; optional hybrid/model modes still require exact
+`--live` authorization. The legacy `find` behavior below remains unchanged.
+
 ```sh
 ./shylock find snapshot.json prices
 ./shylock find page-ir.json parking

@@ -1,0 +1,97 @@
+# Explicit live consent is command policy, never a property of downloaded HTML
+# or a rule. A rule can request review assistance but cannot authorize a call.
+fn nf_mode_valid(mode:string,profile:string,live:bool)->bool {
+  if mode=="deterministic" { return profile=="" && !live; }
+  return (mode=="hybrid" || mode=="model") && profile!="" && live;
+}
+fn nf_model_needed(mode:string,options:sexpr,rows:sexpr)->bool {
+  if mode=="deterministic" { return false; }
+  if mode=="model" { return true; }
+  if nf_get(options,"fallback")!="model_review" { return false; }
+  if sx_kind(rows)==0 { return true; }
+  var rest=rows;
+  while sx_kind(rest)==3 {
+    let row=sx_head(rest);
+    if nf_get(row,"issue")!="" || nf_number(row,"minor")<0 || nf_get(row,"basis")=="unknown" ||
+      nf_conflicting(row,rows) { return true; }
+    rest=sx_tail(rest);
+  }
+  return false;
+}
+fn nf_currency(marker:string,symbol:string,scoped:string,options:sexpr)->(string,string,string) {
+  var currency=marker;
+  var source="token";
+  var issue="";
+  if currency!="" && shy_money_scale(currency)<0 { return ("","unknown","unsupported_currency"); }
+  if symbol=="euro" {
+    if currency!="" && currency!="EUR" { issue="currency_conflict"; }
+    currency="EUR"; source="euro_symbol";
+  }
+  if scoped!="" {
+    if shy_money_scale(scoped)<0 { issue="invalid_scoped_currency"; }
+    else {
+      if currency!="" && currency!=scoped { issue="currency_conflict"; }
+      currency=scoped; source="container_metadata";
+    }
+  }
+  let trusted=nf_get(options,"currency");
+  if trusted!="" {
+    if currency!="" && currency!=trusted { issue="currency_conflict"; }
+    currency=trusted; source="trusted_site_rule";
+  }
+  if symbol=="dollar" && currency!="" && currency!="USD" && currency!="CAD" && currency!="AUD" && currency!="NZD" { issue="currency_conflict"; }
+  if symbol=="pound" && currency!="" && currency!="GBP" { issue="currency_conflict"; }
+  if issue!="" { return ("","conflicting",issue); }
+  if currency=="" { return ("","unknown","currency_unresolved"); }
+  return (currency,source,"");
+}
+fn nf_amount(amount:string,currency:string,options:sexpr)->(i64,string) {
+  if currency=="" { return (0-1,"currency_unresolved"); }
+  var decimal=nf_get(options,"decimal");
+  let group=nf_get(options,"group");
+  if decimal=="" {
+    # The default accepts ungrouped integers or a canonical dot fraction with
+    # exactly the known scale. Three-digit fractions remain ambiguous without
+    # an explicit locale (e.g. KWD 1.200 versus a thousands separator).
+    if nf_contains(amount,",") { return (0-1,"numeric_interpretation_unresolved"); }
+    if nf_contains(amount,".") {
+      let scale=shy_money_scale(currency);
+      var dots=0; var last=0; var i=0;
+      while i<text_len(amount) {
+        if text_byte(amount,i)==46 { dots=dots+1; last=i; }
+        i=i+1;
+      }
+      if dots!=1 || scale==3 || text_len(amount)-last-1!=scale { return (0-1,"numeric_interpretation_unresolved"); }
+    }
+    decimal=".";
+  }
+  let minor=shy_naive_money(amount,currency,decimal,group);
+  if minor<0 { return (minor,"invalid_or_unresolved_amount"); }
+  return (minor,"");
+}
+fn nf_scope_equal(a:sexpr,b:sexpr)->bool {
+  # Scope is structural, not just a title: two cards with the same heading are
+  # not assumed to quote the same stay. No stay context is invented.
+  return nf_get(a,"container")==nf_get(b,"container") && nf_get(a,"listing")==nf_get(b,"listing");
+}
+fn nf_equivalent(a:sexpr,b:sexpr)->bool {
+  if !nf_scope_equal(a,b) || nf_get(a,"basis")!=nf_get(b,"basis") ||
+    nf_get(a,"qualifier")!=nf_get(b,"qualifier") || nf_get(a,"currency")!=nf_get(b,"currency") { return false; }
+  if nf_number(a,"minor")>=0 && nf_number(b,"minor")>=0 { return nf_number(a,"minor")==nf_number(b,"minor"); }
+  return nf_get(a,"amount")==nf_get(b,"amount") && nf_get(a,"offset")==nf_get(b,"offset") &&
+    nf_get(a,"span")==nf_get(b,"span");
+}
+fn nf_contradiction(a:sexpr,b:sexpr)->bool {
+  if !nf_scope_equal(a,b) || nf_get(a,"container")=="-1" || nf_get(a,"basis")=="unknown" ||
+    nf_get(a,"basis")!=nf_get(b,"basis") || nf_get(a,"qualifier")!=nf_get(b,"qualifier") { return false; }
+  if nf_get(a,"currency")!="" && nf_get(b,"currency")!="" && nf_get(a,"currency")!=nf_get(b,"currency") { return true; }
+  return nf_number(a,"minor")>=0 && nf_number(b,"minor")>=0 && nf_number(a,"minor")!=nf_number(b,"minor");
+}
+fn nf_conflicting(row:sexpr,rows:sexpr)->bool {
+  var rest=rows;
+  while sx_kind(rest)==3 {
+    if nf_contradiction(row,sx_head(rest)) { return true; }
+    rest=sx_tail(rest);
+  }
+  return false;
+}

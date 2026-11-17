@@ -1,0 +1,18 @@
+{
+  "schema": "shylock.naive-rule/v1",
+  "host": "*",
+  "target": "prices",
+  "container": "body",
+  "listing": {"selector": "h1", "attribute": ""},
+  "fields": [
+    {"selector": "p", "attribute": "", "kind": "auto", "regex": "", "priority": 30, "currency_selector": "", "currency_attribute": ""}
+  ],
+  "currency": "",
+  "currency_source": "evidence",
+  "decimal_separator": "",
+  "group_separator": "",
+  "maximum_candidates": 128,
+  "maximum_containers": 1,
+  "include_existing": true,
+  "fallback": "none"
+}

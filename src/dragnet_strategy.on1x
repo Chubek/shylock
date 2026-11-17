@@ -1,0 +1,237 @@
+# Recognition is native; interpretation of explicit labels and rule kinds is
+# application policy. All labels refer to the selected DOM node, not nearby
+# raw bytes from another listing. Per-day is deliberately not nightly.
+fn nf_word_byte(c:i64)->bool {
+  return (c>=97 && c<=122) || (c>=48 && c<=57) || c==95;
+}
+fn nf_phrase(value:string,needle:string)->bool {
+  var i=0;
+  while i+text_len(needle)<=text_len(value) {
+    let end=i+text_len(needle);
+    if text_slice(value,i,end)==needle &&
+      (i==0 || !nf_word_byte(text_byte(needle,0)) || !nf_word_byte(text_byte(value,i-1))) &&
+      (end==text_len(value) || !nf_word_byte(text_byte(needle,text_len(needle)-1)) || !nf_word_byte(text_byte(value,end))) { return true; }
+    i=i+1;
+  }
+  return false;
+}
+fn nf_basis_kind(kind:string)->string {
+  if kind=="nightly_rate" { return "nightly"; }
+  if kind=="weekly_rate" { return "weekly"; }
+  if kind=="monthly_rate" { return "monthly"; }
+  if kind=="stay_total" { return "stay_total"; }
+  if kind=="cleaning_fee" || kind=="service_fee" || kind=="tax" || kind=="refundable_deposit" || kind=="per_day" { return kind; }
+  return "unknown";
+}
+fn nf_classify(text:string,kind:string)->(string,string,string) {
+  let label=nf_lower(text);
+  var basis=nf_basis_kind(kind);
+  var qualifier="unknown";
+  var issue="";
+  var detected="unknown"; var labels=0;
+  if nf_phrase(label,"per night") || nf_phrase(label,"/night") || nf_phrase(label,"nightly") { detected="nightly"; labels=labels+1; }
+  if nf_phrase(label,"per week") || nf_phrase(label,"/week") || nf_phrase(label,"weekly") { detected="weekly"; labels=labels+1; }
+  if nf_phrase(label,"per month") || nf_phrase(label,"/month") || nf_phrase(label,"monthly") { detected="monthly"; labels=labels+1; }
+  if nf_phrase(label,"per day") || nf_phrase(label,"/day") { detected="per_day"; labels=labels+1; }
+  if nf_phrase(label,"total") { detected="stay_total"; labels=labels+1; }
+  if nf_phrase(label,"cleaning") { detected="cleaning_fee"; labels=labels+1; }
+  if nf_phrase(label,"service fee") { detected="service_fee"; labels=labels+1; }
+  if nf_phrase(label,"tax") { detected="tax"; labels=labels+1; }
+  if nf_phrase(label,"refundable") && nf_phrase(label,"deposit") { detected="refundable_deposit"; labels=labels+1; }
+  if labels>1 { issue="multiple_basis_labels"; detected="unknown"; }
+  if basis=="unknown" && kind!="unknown" { basis=detected; }
+  else {
+    if detected!="unknown" && detected!=basis && kind!="unknown" { issue="rule_label_disagreement"; }
+  }
+  if nf_phrase(label,"from ") || nf_phrase(label,"minimum") || kind=="minimum_price" { qualifier="from"; }
+  if nf_phrase(label,"discounted") || nf_phrase(label,"discount") || nf_phrase(label,"sale price") || kind=="discounted_price" {
+    if qualifier!="unknown" { issue="multiple_price_qualifiers"; }
+    qualifier="discounted";
+  }
+  if nf_phrase(label,"original") || nf_phrase(label,"was ") || kind=="original_price" {
+    if qualifier!="unknown" { issue="multiple_price_qualifiers"; }
+    qualifier="original";
+  }
+  if qualifier=="unknown" && basis!="unknown" { qualifier="unspecified"; }
+  return (basis,qualifier,issue);
+}
+fn nf_default_pattern(attribute:string)->string {
+  if attribute!="" { return "[0-9]([0-9.,]|[ \t]+[0-9])*"; }
+  return "(([A-Z][A-Z][A-Z]|€|\\$|£)[ \t]*[0-9]([0-9.,]|[ \t]+[0-9])*|[0-9]([0-9.,]|[ \t]+[0-9])*[ \t]*([A-Z][A-Z][A-Z]|€|\\$|£))";
+}
+fn nf_containers(options:sexpr)->(sexpr,bool) {
+  var rows=sx_nil(); var cursor=0; var count=0;
+  while true {
+    let node=shy_naive_query(0,nf_get(options,"container"),cursor);
+    if node<0 { return (rows,false); }
+    if node==0 { return (NL.basis_list_rev(rows),true); }
+    count=count+1;
+    if count>nf_number(options,"containers") { return (rows,false); }
+    # Nested listing scopes are rejected rather than counting a nested quote
+    # twice under different parents. This is structural containment, not range
+    # proximity. An explicit leaf-container selector resolves such markup.
+    let nested=shy_naive_query(node,nf_get(options,"container"),node);
+    if nested!=0 { return (rows,false); }
+    let first=shy_naive_query(node,nf_get(options,"listing_selector"),0);
+    if first<0 { return (rows,false); }
+    var listing=""; var issue="listing_unresolved";
+    if first>0 {
+      let next=shy_naive_query(node,nf_get(options,"listing_selector"),first);
+      if next<0 { return (rows,false); }
+      if next==0 {
+        listing=nf_trim(shy_naive_text(first,nf_get(options,"listing_attribute")));
+        if text_len(listing)>256 { return (rows,false); }
+        if listing!="" { issue=""; }
+      } else { issue="listing_ambiguous"; }
+    }
+    var row=sx_nil();
+    row=nf_put(row,"handle",nf_integer(node));
+    row=nf_put(row,"container",nf_integer(shy_naive_offset(node)));
+    row=nf_put(row,"listing",listing); row=nf_put(row,"issue",issue);
+    rows=sx_cons(row,rows); cursor=node;
+  }
+  return (rows,false);
+}
+fn nf_scoped_currency(scope:i64,field:sexpr)->(string,bool) {
+  let selector=nf_get(field,"currency_selector");
+  if selector=="" { return ("",true); }
+  let first=shy_naive_query(scope,selector,0);
+  if first<0 { return ("",false); }
+  if first==0 { return ("",true); }
+  let second=shy_naive_query(scope,selector,first);
+  if second<0 { return ("",false); }
+  if second>0 { return ("ambiguous_metadata",true); }
+  let value=nf_trim(shy_naive_text(first,nf_get(field,"currency_attribute")));
+  return (value,true);
+}
+fn nf_dom_rows(containers:sexpr,fields:sexpr,options:sexpr)->(sexpr,bool) {
+  var rows=sx_nil(); var count=0; var scopes=containers;
+  while sx_kind(scopes)==3 {
+    let scope=sx_head(scopes); let handle=nf_number(scope,"handle");
+    var strategies=fields;
+    while sx_kind(strategies)==3 {
+      let field=sx_head(strategies);
+      let (scoped,currency_ok)=nf_scoped_currency(handle,field);
+      if !currency_ok { return (rows,false); }
+      var label=""; var label_offset=0-1;
+      let context_selector=nf_get(field,"context_selector");
+      if context_selector!="" {
+        let label_node=shy_naive_query(handle,context_selector,0);
+        if label_node<0 { return (rows,false); }
+        if label_node>0 {
+          if shy_naive_query(handle,context_selector,label_node)!=0 { return (rows,false); }
+          label=text_concat("",shy_naive_text(label_node,""));
+          label_offset=shy_naive_offset(label_node);
+        }
+      }
+      var node=shy_naive_query(handle,nf_get(field,"selector"),0);
+      while node>0 {
+        let text=text_concat("",shy_naive_text(node,nf_get(field,"attribute")));
+        let (basis,qualifier,class_issue)=nf_classify(text_concat(text,text_concat(" ",label)),nf_get(field,"kind"));
+        var pattern=nf_get(field,"regex");
+        if pattern=="" { pattern=nf_default_pattern(nf_get(field,"attribute")); }
+        let hits=shy_naive_scan(node,nf_get(field,"attribute"),pattern);
+        if hits<0 { return (rows,false); }
+        var i=0;
+        while i<hits {
+          count=count+1;
+          if count>nf_number(options,"limit") { return (rows,false); }
+          let amount=text_concat("",shy_naive_hit_text(i,"amount"));
+          let (currency,currency_source,currency_issue)=nf_currency(shy_naive_hit_text(i,"currency"),shy_naive_hit_text(i,"symbol"),scoped,options);
+          let (minor,amount_issue)=nf_amount(amount,currency,options);
+          var issue=nf_get(scope,"issue");
+          if amount_issue!="" { issue=amount_issue; }
+          if currency_issue!="" { issue=currency_issue; }
+          if class_issue!="" { issue=class_issue; }
+          var row=sx_nil();
+          row=nf_put(row,"container",nf_get(scope,"container"));
+          row=nf_put(row,"listing",nf_get(scope,"listing"));
+          row=nf_put(row,"amount",amount); row=nf_put(row,"currency",currency);
+          row=nf_put(row,"currency_source",currency_source);
+          row=nf_put(row,"minor",nf_integer(minor));
+          row=nf_put(row,"basis",basis); row=nf_put(row,"qualifier",qualifier);
+          row=nf_put(row,"method","naive-dom-regex/v1");
+          row=nf_put(row,"selector",nf_get(field,"selector"));
+          row=nf_put(row,"attribute",nf_get(field,"attribute"));
+          row=nf_put(row,"priority",nf_get(field,"priority"));
+          row=nf_put(row,"offset",nf_integer(shy_naive_hit_number(i,"offset")));
+          row=nf_put(row,"span",nf_integer(shy_naive_hit_number(i,"span")));
+          row=nf_put(row,"span_kind",shy_naive_hit_text(i,"span_kind"));
+          row=nf_put(row,"normalized_offset",nf_integer(shy_naive_hit_number(i,"start")));
+          row=nf_put(row,"normalized_length",nf_integer(shy_naive_hit_number(i,"length")));
+          row=nf_put(row,"issue",issue); row=nf_put(row,"context",text);
+          row=nf_put(row,"classification_context",label);
+          row=nf_put(row,"context_selector",context_selector);
+          row=nf_put(row,"context_offset",nf_integer(label_offset));
+          rows=sx_cons(row,rows); i=i+1;
+        }
+        node=shy_naive_query(handle,nf_get(field,"selector"),node);
+      }
+      if node<0 { return (rows,false); }
+      strategies=sx_tail(strategies);
+    }
+    scopes=sx_tail(scopes);
+  }
+  return (NL.basis_list_rev(rows),true);
+}
+fn nf_existing_rows(containers:sexpr,rows:sexpr,options:sexpr)->(sexpr,bool) {
+  if nf_get(options,"existing")!="1" { return (rows,true); }
+  if shy_naive_meta("legacy_status")!="available" { return (rows,true); }
+  # The retained legacy artifact remains separately replayable. Only representations
+  # whose source token belongs to a selected DOM container are associated with it.
+  if shy_document_parse(shy_naive_meta("legacy"))!=1 { return (rows,false); }
+  var result=NL.basis_list_rev(rows); var count=NL.basis_list_length(rows); var i=0;
+  while i<shy_document_size("",-1,"candidates") {
+    let offset=shy_document_number("candidates",i,"byte_offset");
+    let method=shy_document_text("candidates",i,"method");
+    # Token text duplicates are already recognized by the new regex strategy;
+    # preserve JSON-LD, microdata and explicit attributes, not generic legacy scans.
+    if method=="json-ld" || method=="microdata" {
+      var scopes=containers; var scope=sx_nil();
+      while sx_kind(scopes)==3 {
+        let candidate_scope=sx_head(scopes);
+        let owner=shy_naive_owner(offset,nf_number(candidate_scope,"handle"));
+        if owner>0 && ((method=="json-ld" && shy_naive_structured_visible(owner)==1) || shy_naive_visible(owner)==1) { scope=candidate_scope; }
+        scopes=sx_tail(scopes);
+      }
+      if sx_kind(scope)==3 {
+        count=count+1;
+        if count>nf_number(options,"limit") { shy_document_close(); return (rows,false); }
+        let amount=shy_document_text("candidates",i,"amount_text");
+        let marker=shy_document_text("candidates",i,"currency");
+        let (currency,source,currency_issue)=nf_currency(marker,"","",options);
+        # JSON numbers use canonical decimal syntax, independent of HTML locale.
+        var numeric_options=nf_put(options,"decimal",".");
+        numeric_options=nf_put(numeric_options,"group","");
+        let (minor,amount_issue)=nf_amount(amount,currency,numeric_options);
+        var basis=shy_document_text("candidates",i,"basis");
+        if basis=="total" { basis="stay_total"; }
+        var issue=nf_get(scope,"issue");
+        if method=="json-ld" {
+          let (structured_basis,structured_qualifier,structured_issue)=nf_classify(shy_naive_claim_field(i,"unitText"),"auto");
+          if basis=="unknown" { basis=structured_basis; }
+          else { if structured_basis!="unknown" && structured_basis!=basis { issue="structured_basis_disagreement"; } }
+          if structured_issue!="" { issue=structured_issue; }
+        }
+        if amount_issue!="" { issue=amount_issue; }
+        if currency_issue!="" { issue=currency_issue; }
+        var row=sx_nil();
+        row=nf_put(row,"container",nf_get(scope,"container")); row=nf_put(row,"listing",nf_get(scope,"listing"));
+        row=nf_put(row,"amount",amount); row=nf_put(row,"currency",currency);
+        row=nf_put(row,"currency_source",source); row=nf_put(row,"minor",nf_integer(minor));
+        row=nf_put(row,"basis",basis); row=nf_put(row,"qualifier",shy_document_text("candidates",i,"qualifier"));
+        row=nf_put(row,"method",text_concat("existing-",method));
+        row=nf_put(row,"selector",""); row=nf_put(row,"attribute",""); row=nf_put(row,"priority","60");
+        row=nf_put(row,"offset",nf_integer(offset));
+        row=nf_put(row,"span",nf_integer(shy_document_number("candidates",i,"byte_length")));
+        row=nf_put(row,"span_kind","existing-source-range");
+        row=nf_put(row,"normalized_offset","-1"); row=nf_put(row,"normalized_length","-1");
+        row=nf_put(row,"issue",issue); row=nf_put(row,"context","");
+        row=nf_put(row,"legacy_evidence_id",shy_document_text("candidates",i,"evidence_id"));
+        result=sx_cons(row,result);
+      }
+    }
+    i=i+1;
+  }
+  shy_document_close(); return (NL.basis_list_rev(result),true);
+}

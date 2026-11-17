@@ -9,6 +9,8 @@ extern fn shy_native_intelligence_test()->i64;
 extern fn shy_formula(path:string,reference:i64,weekend:i64,premium:i64)->i64;
 
 fn main()->i64 {
+  if shy_native_naive_test()!=1 { println("native NaiveFinder failed"); return 1; }
+  if !naive_policy_test() { println("On1x NaiveFinder policy failed"); return 1; }
   if shy_native_registry_test()!=1 { return 1; }
   if shy_native_storage_test()!=1 { return 1; }
   if shy_native_gui_test()<0 { return 1; }
@@ -23,3 +25,5 @@ fn main()->i64 {
   println("Native registry, migration, document-session and formula lifetime tests passed.");
   return 0;
 }
+import "naive_policy.on1x";
+extern fn shy_native_naive_test()->i64;

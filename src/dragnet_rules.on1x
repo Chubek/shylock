@@ -1,0 +1,214 @@
+import std.sexpr.sexpr as NS;
+import std.collections.List as NL;
+import "dragnet_native.on1x";
+
+# Managed alists keep candidate facts in On1x, rather than in an opaque native
+# workflow. Numbers are decimal strings because the pinned sexpr ABI is textual.
+fn nf_put(row:sexpr,key:string,value:string)->sexpr {
+  return sx_cons(sx_cons(sx_string(key),sx_cons(sx_string(value),sx_nil())),row);
+}
+fn nf_get(row:sexpr,key:string)->string {
+  var rest=row;
+  while sx_kind(rest)==3 {
+    let pair=sx_head(rest);
+    if sx_text(sx_head(pair))==key { return sx_text(sx_head(sx_tail(pair))); }
+    rest=sx_tail(rest);
+  }
+  return "";
+}
+fn nf_integer(n:i64)->string {
+  if n<0 { return text_concat("-",NS.sexpr_nat(0-n)); }
+  return NS.sexpr_nat(n);
+}
+fn nf_number(row:sexpr,key:string)->i64 {
+  let value=nf_get(row,key);
+  var i=0; var sign=1; var result=0;
+  if text_len(value)>0 && text_byte(value,0)==45 { i=1; sign=0-1; }
+  while i<text_len(value) {
+    result=result*10+text_byte(value,i)-48;
+    i=i+1;
+  }
+  return result*sign;
+}
+fn nf_lower(value:string)->string {
+  let out=buffer_new(); var i=0;
+  while i<text_len(value) {
+    var c=text_byte(value,i);
+    if c>=65 && c<=90 { c=c+32; }
+    buffer_byte(out,c); i=i+1;
+  }
+  return buffer_text(out);
+}
+fn nf_contains(value:string,needle:string)->bool {
+  if needle=="" { return false; }
+  var i=0;
+  while i+text_len(needle)<=text_len(value) {
+    if text_slice(value,i,i+text_len(needle))==needle { return true; }
+    i=i+1;
+  }
+  return false;
+}
+fn nf_trim(value:string)->string {
+  var first=0; var last=text_len(value);
+  while first<last && text_byte(value,first)<=32 { first=first+1; }
+  while last>first && text_byte(value,last-1)<=32 { last=last-1; }
+  return text_slice(value,first,last);
+}
+fn nf_name(value:string,empty:bool)->bool {
+  if value=="" { return empty; }
+  if text_len(value)>128 { return false; }
+  var i=0;
+  while i<text_len(value) {
+    let c=text_byte(value,i);
+    if !((c>=65 && c<=90) || (c>=97 && c<=122) || (c>=48 && c<=57) || c==45 || c==95 || c==58) { return false; }
+    i=i+1;
+  }
+  return true;
+}
+fn nf_selector(value:string)->bool {
+  if value=="*" { return true; }
+  if value=="" || nf_contains(value,":") { return false; }
+  var start=0;
+  if text_byte(value,0)==35 || text_byte(value,0)==46 { start=1; }
+  return nf_name(text_slice(value,start,text_len(value)),false);
+}
+fn nf_kind(value:string)->bool {
+  return value=="auto" || value=="nightly_rate" || value=="weekly_rate" || value=="monthly_rate" ||
+    value=="stay_total" || value=="cleaning_fee" || value=="service_fee" || value=="tax" ||
+    value=="refundable_deposit" || value=="discounted_price" || value=="original_price" ||
+    value=="minimum_price" || value=="per_day" || value=="unknown";
+}
+fn nf_regex_safe(pattern:string)->bool {
+  if text_len(pattern)>256 { return false; }
+  # Counted repetitions can expand to huge NFAs in the pinned engine. Its own
+  # compiler diagnoses syntax; this policy bounds emitted size before compiling.
+  return !nf_contains(pattern,"{") && !nf_contains(pattern,"}");
+}
+fn nf_field_valid(index:i64)->bool {
+  var closed=false;
+  if shy_document_has("fields",index,"context_selector","string")==1 {
+    closed=@fields("closed","fields",index,"selector:string","attribute:string","kind:string","regex:string",
+      "priority:integer","currency_selector:string","currency_attribute:string","context_selector:string");
+  } else {
+    closed=@fields("closed","fields",index,"selector:string","attribute:string","kind:string","regex:string",
+      "priority:integer","currency_selector:string","currency_attribute:string");
+  }
+  if !closed { return false; }
+  let selector=shy_document_text("fields",index,"selector");
+  let attribute=shy_document_text("fields",index,"attribute");
+  let currency_selector=shy_document_text("fields",index,"currency_selector");
+  let currency_attribute=shy_document_text("fields",index,"currency_attribute");
+  let context_selector=shy_document_text("fields",index,"context_selector");
+  var pattern=shy_document_text("fields",index,"regex");
+  if pattern=="" { pattern=nf_default_pattern(attribute); }
+  return nf_selector(selector) && nf_name(attribute,true) &&
+    nf_kind(shy_document_text("fields",index,"kind")) &&
+    nf_regex_safe(pattern) && shy_naive_regex_valid(pattern)==1 &&
+    shy_document_number("fields",index,"priority")<=100 &&
+    (currency_selector=="" || nf_selector(currency_selector)) && nf_name(currency_attribute,true) &&
+    (context_selector=="" || nf_selector(context_selector)) &&
+    (currency_selector!="" || currency_attribute=="");
+}
+fn nf_unique_rule_keys(source:string)->bool {
+  # MuLIB JSON deliberately replaces duplicate object members. Rules instead
+  # reject them, including differently escaped spellings of the same key. The
+  # JSON grammar has already been checked by MuLIB; this walk only tracks scope.
+  var stack=sx_nil(); var i=0;
+  while i<text_len(source) {
+    let c=text_byte(source,i);
+    if c==123 { stack=sx_cons(sx_nil(),stack); }
+    if c==91 { stack=sx_cons(sx_symbol("array"),stack); }
+    if c==125 || c==93 { stack=sx_tail(stack); }
+    if c==34 {
+      let start=i; i=i+1; var escaped=false; var done=false;
+      while i<text_len(source) && !done {
+        let byte=text_byte(source,i);
+        if byte==34 && !escaped { done=true; }
+        if byte==92 && !escaped { escaped=true; } else { escaped=false; }
+        i=i+1;
+      }
+      var next=i;
+      while next<text_len(source) && text_byte(source,next)<=32 { next=next+1; }
+      if next<text_len(source) && text_byte(source,next)==58 {
+        let key=text_concat("",shy_naive_decode(text_slice(source,start,i)));
+        var keys=sx_head(stack); var rest=keys;
+        while sx_kind(rest)==3 {
+          if sx_text(sx_head(rest))==key { return false; }
+          rest=sx_tail(rest);
+        }
+        keys=sx_cons(sx_string(key),keys);
+        stack=sx_cons(keys,sx_tail(stack));
+      }
+    } else { i=i+1; }
+  }
+  return true;
+}
+fn nf_rule_valid(target:string)->bool {
+  if !nf_unique_rule_keys(shy_naive_rule()) { return false; }
+  if !@fields("closed","",-1,"schema:string","host:string","target:string","container:string","listing:object","fields:array",
+    "currency:string","currency_source:string","decimal_separator:string","group_separator:string",
+    "maximum_candidates:integer","maximum_containers:integer","include_existing:boolean","fallback:string") ||
+    shy_document_text("",-1,"schema")!="shylock.naive-rule/v1" { return false; }
+  let host=shy_document_text("",-1,"host");
+  let declared_target=shy_document_text("",-1,"target");
+  let fallback=shy_document_text("",-1,"fallback");
+  let currency=shy_document_text("",-1,"currency");
+  let source=shy_document_text("",-1,"currency_source");
+  let decimal=shy_document_text("",-1,"decimal_separator");
+  let group=shy_document_text("",-1,"group_separator");
+  let count=shy_document_size("",-1,"fields");
+  if target=="" || target!=declared_target || text_len(target)>128 || text_len(host)>253 ||
+    (host!="*" && host!=shy_naive_meta("host")) ||
+    !nf_selector(shy_document_text("",-1,"container")) ||
+    (fallback!="none" && fallback!="model_review") || count<1 || count>32 ||
+    shy_document_number("",-1,"maximum_candidates")<1 || shy_document_number("",-1,"maximum_candidates")>256 ||
+    shy_document_number("",-1,"maximum_containers")<1 || shy_document_number("",-1,"maximum_containers")>128 { return false; }
+  if currency=="" { if source!="evidence" { return false; } }
+  else {
+    if shy_money_scale(currency)<0 || source!="trusted_site_rule" || host=="*" { return false; }
+  }
+  if decimal!="" && decimal!="." && decimal!="," { return false; }
+  if group!="" && group!="." && group!="," && group!=" " { return false; }
+  if (group!="" && (decimal=="" || group==decimal)) { return false; }
+  if shy_document_child("listing")!=1 { return false; }
+  let listing_ok=@fields("closed","",-1,"selector:string","attribute:string") &&
+    nf_selector(shy_document_text("",-1,"selector")) && nf_name(shy_document_text("",-1,"attribute"),true);
+  shy_document_reset();
+  if !listing_ok { return false; }
+  var i=0;
+  while i<count { if !nf_field_valid(i) { return false; } i=i+1; }
+  return true;
+}
+fn nf_rule_options()->sexpr {
+  var row=sx_nil();
+  row=nf_put(row,"currency",shy_document_text("",-1,"currency"));
+  row=nf_put(row,"currency_source",shy_document_text("",-1,"currency_source"));
+  row=nf_put(row,"decimal",shy_document_text("",-1,"decimal_separator"));
+  row=nf_put(row,"group",shy_document_text("",-1,"group_separator"));
+  row=nf_put(row,"limit",nf_integer(shy_document_number("",-1,"maximum_candidates")));
+  row=nf_put(row,"containers",nf_integer(shy_document_number("",-1,"maximum_containers")));
+  row=nf_put(row,"container",shy_document_text("",-1,"container"));
+  row=nf_put(row,"target",shy_document_text("",-1,"target"));
+  row=nf_put(row,"fallback",shy_document_text("",-1,"fallback"));
+  row=nf_put(row,"existing",nf_integer(shy_document_boolean("",-1,"include_existing")));
+  shy_document_child("listing");
+  row=nf_put(row,"listing_selector",shy_document_text("",-1,"selector"));
+  row=nf_put(row,"listing_attribute",shy_document_text("",-1,"attribute"));
+  shy_document_reset(); return row;
+}
+fn nf_rule_fields()->sexpr {
+  var rows=sx_nil(); var i=0;
+  while i<shy_document_size("",-1,"fields") {
+    var row=sx_nil();
+    row=nf_put(row,"selector",shy_document_text("fields",i,"selector"));
+    row=nf_put(row,"attribute",shy_document_text("fields",i,"attribute"));
+    row=nf_put(row,"kind",shy_document_text("fields",i,"kind"));
+    row=nf_put(row,"regex",shy_document_text("fields",i,"regex"));
+    row=nf_put(row,"priority",nf_integer(shy_document_number("fields",i,"priority")));
+    row=nf_put(row,"currency_selector",shy_document_text("fields",i,"currency_selector"));
+    row=nf_put(row,"currency_attribute",shy_document_text("fields",i,"currency_attribute"));
+    row=nf_put(row,"context_selector",shy_document_text("fields",i,"context_selector"));
+    rows=sx_cons(row,rows); i=i+1;
+  }
+  return NL.basis_list_rev(rows);
+}

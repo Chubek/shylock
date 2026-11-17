@@ -1,0 +1,74 @@
+import "dragnet_rules.on1x";
+import "dragnet_strategy.on1x";
+import "dragnet_rank.on1x";
+import "dragnet_evidence.on1x";
+import "dragnet_policy.on1x";
+
+fn naive_process(target:string,mode:string,profile:string,emit:bool)->i64 {
+  if shy_document_parse(shy_naive_rule())!=1 || !nf_rule_valid(target) {
+    shy_document_close(); return shy_error("invalid NaiveFinder rule schema, host, target or unsupported construct");
+  }
+  let options=nf_rule_options(); let fields=nf_rule_fields();
+  shy_document_close();
+  let (containers,scopes_ok)=nf_containers(options);
+  if !scopes_ok { return shy_error("NaiveFinder container, identity or native traversal limit failure"); }
+  let (dom,dom_ok)=nf_dom_rows(containers,fields,options);
+  if !dom_ok { return shy_error("NaiveFinder DOM text, currency metadata, regex, allocation or candidate limit failure"); }
+  let (rows,existing_ok)=nf_existing_rows(containers,dom,options);
+  if !existing_ok { return shy_error("NaiveFinder existing evidence aggregation or candidate limit failure"); }
+  if shy_naive_finish(nf_artifact(options,rows))!=1 { return shy_error("NaiveFinder allocation, source span or replay mismatch"); }
+  if !emit { return 0; }
+  var call=0;
+  if nf_model_needed(mode,options,rows) { call=1; }
+  let emitted=shy_naive_emit(mode,profile,target,call);
+  if emitted==0 && shy_naive_meta("legacy_status")!="available" { return 2; }
+  return emitted;
+}
+fn naive_find(source:string,rules_path:string,target:string,mode:string,profile_path:string,live:bool)->i64 {
+  if !nf_mode_valid(mode,profile_path,live) { return shy_error("NaiveFinder model modes require a profile and exact --live consent; deterministic takes neither"); }
+  var profile="";
+  if mode!="deterministic" {
+    if shy_document_open(profile_path)!=1 { return shy_error("cannot read OpenAI profile"); }
+    if !openai_profile_valid() { shy_document_close(); return shy_error("invalid OpenAI profile"); }
+    profile=text_concat("",shy_document_json()); shy_document_close();
+  }
+  if shy_naive_begin(source,rules_path)!=1 { return shy_error("cannot load verified source, bounded DOM or existing Dragnet extraction"); }
+  let result=naive_process(target,mode,profile,true);
+  shy_document_close(); shy_naive_close(); return result;
+}
+fn naive_replay_loaded(emit:bool)->i64 {
+  if shy_document_parse(shy_naive_rule())!=1 { return shy_error("cannot parse retained NaiveFinder rule"); }
+  let target=text_concat("",shy_document_text("",-1,"target"));
+  shy_document_close();
+  return naive_process(target,"deterministic","",emit);
+}
+fn naive_replay(path:string,emit:bool)->i64 {
+  if shy_naive_replay_begin(path)!=1 { return shy_error("cannot load NaiveFinder replay artifact"); }
+  let result=naive_replay_loaded(emit);
+  if emit || result!=0 { shy_naive_close(); }
+  return result;
+}
+
+# Review and stored replay re-enter exactly the same On1x pipeline. The native
+# store receives a result only after full equality, not merely matching hashes.
+fn naive_review_load(path:string,html:string,context:string)->i64 {
+  if shy_document_open(path)!=1 { return 0; }
+  let schema=text_concat("",shy_document_text("",-1,"schema"));
+  shy_document_close();
+  if schema!="shylock.naive-find/v1" { return shy_review_load(path,html,context); }
+  if naive_replay(path,false)!=0 { shy_naive_close(); return 0; }
+  let result=shy_review_naive(html,context);
+  shy_naive_close(); return result;
+}
+fn naive_review_admissible()->bool {
+  if shy_review_is_naive()!=1 { return true; }
+  let listing=shy_review_source_field("listing_id");
+  if listing!="" && listing!=shy_review_field("listing_id") { return false; }
+  let qualifier=shy_review_source_field("qualifier");
+  if qualifier!="unknown" && qualifier!=shy_review_field("qualifier") { return false; }
+  let issue=shy_review_source_field("diagnostic");
+  let reason=shy_review_field("conflict_resolution");
+  if shy_review_conflict()==1 ||
+    (issue!="" && issue!="listing_unresolved" && issue!="listing_ambiguous") { return reason!=""; }
+  return true;
+}

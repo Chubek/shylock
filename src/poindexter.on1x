@@ -12,6 +12,11 @@ extern fn shy_revision_save(decision:string,reviewer:string,reason:string)->i64;
 extern fn shy_store_list(cohort:string)->i64;
 extern fn shy_store_history(observation:string)->i64;
 extern fn shy_store_replay(extraction:string)->i64;
+extern fn shy_store_naive_begin(extraction:string)->i64;
+extern fn shy_review_naive(html:string,context:string)->i64;
+extern fn shy_review_is_naive()->i64;
+extern fn shy_review_conflict()->i64;
+extern fn shy_review_source_field(key:string)->string;
 extern fn shy_store_incompatible(index:i64,field:string,reference:i64,expected:string)->i64;
 extern fn shy_store_select(cohort:string)->i64;
 extern fn shy_stored_field(index:i64,key:string)->string;
@@ -39,7 +44,7 @@ fn review_admissible()->bool {
       return false;
     }
   }
-  return true;
+  return naive_review_admissible();
 }
 
 fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string,
@@ -47,8 +52,12 @@ fn review(path:string,capture:string,index:i64,cohort:string,reviewer:string,
   if index<0 || cohort=="" || reviewer=="" { return shy_error("invalid review inputs"); }
   if shy_store_open(path)!=1 { return 2; }
   var result=2;
-  if shy_review_load(capture,html,context)==1 && shy_review_prepare(index)==1 {
-    if review_admissible() { result=shy_review_save(index,cohort,reviewer,"accepted","initial acceptance"); }
+  if naive_review_load(capture,html,context)==1 && shy_review_prepare(index)==1 {
+    if review_admissible() {
+      var reason="initial acceptance";
+      if shy_review_field("conflict_resolution")!="" { reason=shy_review_field("conflict_resolution"); }
+      result=shy_review_save(index,cohort,reviewer,"accepted",reason);
+    }
     else { shy_error("candidate has unresolved or non-comparable amount, currency, basis, qualifier or stay context"); }
   }
   shy_store_close();
@@ -60,7 +69,7 @@ fn reject(path:string,capture:string,index:i64,cohort:string,reviewer:string,
   if index<0 || cohort=="" || reviewer=="" || reason=="" { return shy_error("invalid rejection inputs"); }
   if shy_store_open(path)!=1 { return 2; }
   var result=2;
-  if shy_review_load(capture,html,"")==1 && shy_review_prepare(index)==1 {
+  if naive_review_load(capture,html,"")==1 && shy_review_prepare(index)==1 {
     result=shy_review_save(index,cohort,reviewer,"rejected",reason);
   }
   shy_store_close();
@@ -96,7 +105,11 @@ fn history(path:string,observation:string)->i64 {
 
 fn replay(path:string,extraction:string)->i64 {
   if shy_store_open(path)!=1 { return 2; }
-  let result=shy_store_replay(extraction);
+  let prepared=shy_store_naive_begin(extraction);
+  var result=2;
+  if prepared==0 { result=shy_store_replay(extraction); }
+  if prepared==1 { result=naive_replay_loaded(true); }
+  shy_naive_close();
   shy_store_close();
   return result;
 }

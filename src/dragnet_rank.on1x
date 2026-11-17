@@ -1,0 +1,58 @@
+# Scores are explainable inspection order only. They never confer truth, select
+# a winner in a conflict, or turn two views of one page into independent sources.
+fn nf_score(row:sexpr)->i64 {
+  var score=nf_number(row,"priority");
+  if nf_get(row,"listing")!="" { score=score+10; }
+  if nf_get(row,"currency")!="" { score=score+10; }
+  if nf_number(row,"minor")>=0 { score=score+10; }
+  if nf_get(row,"basis")!="unknown" { score=score+5; }
+  if nf_get(row,"span_kind")=="exact" { score=score+5; }
+  if nf_get(row,"issue")!="" { score=score-20; }
+  return score;
+}
+fn nf_rank(row:sexpr,rows:sexpr,ordinal:i64)->i64 {
+  var rank=1; var i=0; var rest=rows;
+  while sx_kind(rest)==3 {
+    let other=sx_head(rest);
+    if nf_score(other)>nf_score(row) || (nf_score(other)==nf_score(row) && i<ordinal) { rank=rank+1; }
+    rest=sx_tail(rest); i=i+1;
+  }
+  return rank;
+}
+fn nf_score_reasons(out:buffer,row:sexpr) {
+  buffer_append(out,"[\"rule_priority\"");
+  if nf_get(row,"listing")!="" { buffer_append(out,",\"scoped_listing_identity\""); }
+  if nf_get(row,"currency")!="" { buffer_append(out,",\"explicit_currency\""); }
+  if nf_number(row,"minor")>=0 { buffer_append(out,",\"checked_money\""); }
+  if nf_get(row,"basis")!="unknown" { buffer_append(out,",\"classified_basis\""); }
+  if nf_get(row,"span_kind")=="exact" { buffer_append(out,",\"exact_source_span\""); }
+  if nf_get(row,"issue")!="" { buffer_append(out,",\"unresolved_issue_penalty\""); }
+  buffer_append(out,"]");
+}
+fn nf_first_equivalent(row:sexpr,rows:sexpr,index:i64)->bool {
+  var rest=rows; var i=0;
+  while i<index && sx_kind(rest)==3 {
+    if nf_equivalent(row,sx_head(rest)) { return false; }
+    rest=sx_tail(rest); i=i+1;
+  }
+  return true;
+}
+fn nf_same_page_count(row:sexpr,rows:sexpr)->i64 {
+  var count=0; var rest=rows;
+  while sx_kind(rest)==3 {
+    if nf_equivalent(row,sx_head(rest)) { count=count+1; }
+    rest=sx_tail(rest);
+  }
+  return count;
+}
+fn nf_summary(rows:sexpr)->(i64,i64,i64) {
+  var unresolved=0; var conflicts=0; var groups=0; var index=0; var rest=rows;
+  while sx_kind(rest)==3 {
+    let row=sx_head(rest);
+    if nf_number(row,"minor")<0 || nf_get(row,"basis")=="unknown" || nf_get(row,"issue")!="" { unresolved=unresolved+1; }
+    if nf_conflicting(row,rows) { conflicts=conflicts+1; }
+    if nf_first_equivalent(row,rows,index) { groups=groups+1; }
+    index=index+1; rest=sx_tail(rest);
+  }
+  return (groups,conflicts,unresolved);
+}

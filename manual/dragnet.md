@@ -1,5 +1,10 @@
 # Dragnet: ElviScrape discovery, snapshots and deterministic extraction
 
+For the integrated DOM-aware, On1x-interpreted JSON rule engine, use
+[`find-rule` / NaiveFinder](dragnet-naive.md). It adds container-scoped listing,
+regex/attribute extraction, checked locale policies, inspection ranking, conflict
+groups and fully replayed Poindexter review without changing the commands below.
+
 Dragnet combines **On1x policy/orchestration** (`src/dragnet.on1x`) with **C11
 adapters** (`plugins/dragnet/{workflow,transport,dragnet}.c`). It directly compiles
 and runs the upstream `include/mulib-elvi-scrape.h` interpreter against the real

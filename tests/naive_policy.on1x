@@ -1,0 +1,42 @@
+import "../src/dragnet_rules.on1x";
+import "../src/dragnet_strategy.on1x";
+import "../src/dragnet_rank.on1x";
+import "../src/dragnet_policy.on1x";
+
+fn naive_policy_test()->bool {
+  let (nightly,q1,e1)=nf_classify("From €120 per night","auto");
+  let (total,q2,e2)=nf_classify("€540 total for three nights","auto");
+  let (day,q3,e3)=nf_classify("EUR 12 per day","auto");
+  let (deposit,q4,e4)=nf_classify("EUR 200 refundable deposit","auto");
+  if nightly!="nightly" || q1!="from" || total!="stay_total" || day!="per_day" || deposit!="refundable_deposit" { return false; }
+  let (ambiguous,q5,e5)=nf_classify("EUR 180 per night, EUR 75 cleaning fee","auto");
+  if ambiguous!="unknown" || e5!="multiple_basis_labels" { return false; }
+  var options=sx_nil(); options=nf_put(options,"currency","");
+  options=nf_put(options,"decimal",""); options=nf_put(options,"group","");
+  options=nf_put(options,"fallback","model_review");
+  let (unknown,s1,c1)=nf_currency("","dollar","",options);
+  if unknown!="" || c1!="currency_unresolved" { return false; }
+  let (euro,s2,c2)=nf_currency("","euro","",options);
+  if euro!="EUR" || s2!="euro_symbol" { return false; }
+  let (conflicting,s3,c3)=nf_currency("USD","euro","",options);
+  if conflicting!="" || c3!="currency_conflict" { return false; }
+  let (minor,n1)=nf_amount("180.50","EUR",options);
+  let (unresolved,n2)=nf_amount("1,200","EUR",options);
+  let (ambiguous_three,n3)=nf_amount("1.200","KWD",options);
+  if minor!=18050 || unresolved!=-1 || ambiguous_three!=-1 { return false; }
+  var row=sx_nil();
+  row=nf_put(row,"container","123"); row=nf_put(row,"listing","A");
+  row=nf_put(row,"basis","nightly"); row=nf_put(row,"qualifier","unspecified");
+  row=nf_put(row,"currency","EUR"); row=nf_put(row,"minor","18000"); row=nf_put(row,"priority","80");
+  let duplicate=nf_put(row,"method","existing-json-ld");
+  let alternative=nf_put(row,"minor","19000");
+  let separate=nf_put(alternative,"container","456");
+  if !nf_equivalent(row,duplicate) || !nf_contradiction(row,alternative) || nf_contradiction(row,separate) { return false; }
+  let rows=sx_cons(row,sx_cons(alternative,sx_nil()));
+  if !nf_conflicting(row,rows) || nf_rank(row,rows,0)!=1 || nf_rank(alternative,rows,1)!=2 { return false; }
+  if nf_model_needed("deterministic",options,rows) || !nf_model_needed("hybrid",options,rows) { return false; }
+  if nf_mode_valid("hybrid","profile",false) || nf_mode_valid("deterministic","profile",true) { return false; }
+  if !nf_mode_valid("model","profile",true) { return false; }
+  if nf_selector("div.price") || nf_selector(".card .price") || nf_selector(".price:hover") || nf_selector("[price]") || !nf_selector(".price") { return false; }
+  return true;
+}

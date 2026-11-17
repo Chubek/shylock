@@ -113,6 +113,20 @@ the immutable page and original byte ranges. Local `find` scans canonical
 currency/price tokens or literal target text without a model. Unknown currency,
 rate scope and qualifiers remain explicit, and every result requires review.
 
+For DOM-scoped deterministic scraping with declarative rules:
+
+```sh
+./shylock find-rule snapshot.json plugins/dragnet/rules/rental.json rental_price > found.json
+./shylock find-rule-replay found.json
+```
+
+NaiveFinder keeps listing cards, nightly rates, totals and fees separate, supports
+attributes/regexes and explicit locale policies, preserves source mappings, and
+retains duplicate evidence and material conflicts for review. On1x owns rules,
+classification, ranking and reconciliation; C11 adapts MuLIB primitives. No model
+or network is required. See [the rule, replay and review manual](manual/dragnet-naive.md)
+for supported selectors, strict limits and explicitly authorized model modes.
+
 To connect an **OpenAI Platform API account**, set the environment variable named
 by the profile through your secret manager; never put a key in the profile or
 repository. Configure a model available to that account. `openai-account` reports

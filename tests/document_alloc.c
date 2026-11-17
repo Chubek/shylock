@@ -5,6 +5,7 @@
 #include "../src/engine.h"
 #include "../plugins/dragnet/workflow.h"
 #include "../plugins/dragnet/intelligence.h"
+#include "../plugins/dragnet/naive.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +138,28 @@ int64_t shy_document_allocation_test(void)
         if (success) ok=0; /* Never invent successful model work after failure. */
         mulib_json_destroy(result);
     }
+    mulib_json_t *naive_record=mulib_json_new(MULIB_JSON_OBJECT);
+    if (!shy_add(naive_record,"schema",mulib_json_string("shylock.naive-find/v1")) ||
+        !shy_add(naive_record,"snapshot",shy_clone(snapshot)) ||
+        !shy_add(naive_record,"rule_source",mulib_json_string("{}"))) ok=0;
+    for (size_t at=1;ok && at<=2048;++at) {
+        calls=0; injected=0; fault=at;
+        int success=shy_naive_begin_record(naive_record);
+        if (success) {
+            int64_t node=shy_naive_query(0,"p",0);
+            success=node>0 && shy_naive_scan(node,"","EUR [0-9][0-9.]*")==1;
+            if (success) {
+                (void)shy_naive_span_digest(shy_naive_hit_number(0,"offset"),shy_naive_hit_number(0,"span"));
+                (void)shy_naive_quote("quoted \"value\"");
+                (void)shy_naive_decode("\"key\"");
+                (void)shy_naive_identify("{\"value\":1}","id");
+            }
+        }
+        fault=0; reached+=injected;
+        if ((!injected && !success) || shy_naive_verified()) ok=0;
+        shy_naive_close(); shy_naive_close();
+    }
+    mulib_json_destroy(naive_record);
     if (saved) { setenv("SHY_FAULT_TEST_OPENAI_KEY",saved,1); free(saved); } else unsetenv("SHY_FAULT_TEST_OPENAI_KEY");
     mulib_json_destroy(snapshot); mulib_json_destroy(ir); mulib_json_destroy(profile);
     const char job[]="{\"start_url\":\"https://example.org/search\",\"captured_at\":1000,\"allow_network\":false,\"pages\":[{\"url\":\"https://example.org/search\",\"path\":\"tests/fixtures/browser-start.html\"}]}";

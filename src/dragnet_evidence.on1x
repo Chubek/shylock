@@ -1,0 +1,157 @@
+fn nf_json_string(out:buffer,key:string,value:string) {
+  buffer_append(out,shy_naive_quote(key)); buffer_append(out,":");
+  buffer_append(out,shy_naive_quote(value));
+}
+fn nf_json_integer(out:buffer,key:string,value:i64) {
+  buffer_append(out,shy_naive_quote(key)); buffer_append(out,":");
+  buffer_append(out,nf_integer(value));
+}
+fn nf_json_nullable(out:buffer,key:string,value:i64) {
+  buffer_append(out,shy_naive_quote(key)); buffer_append(out,":");
+  if value<0 { buffer_append(out,"null"); } else { buffer_append(out,nf_integer(value)); }
+}
+fn nf_unknowns(out:buffer,row:sexpr) {
+  buffer_append(out,"[\"stay_start\",\"stay_end\",\"guests\",\"taxes\",\"fees\"");
+  if nf_get(row,"listing")=="" { buffer_append(out,",\"listing_id\""); }
+  if nf_get(row,"currency")=="" { buffer_append(out,",\"currency\",\"scale\""); }
+  if nf_number(row,"minor")<0 { buffer_append(out,",\"minor\""); }
+  if nf_get(row,"basis")=="unknown" { buffer_append(out,",\"basis\""); }
+  if nf_get(row,"qualifier")=="unknown" { buffer_append(out,",\"qualifier\""); }
+  buffer_append(out,"]");
+}
+fn nf_candidate_json(row:sexpr,rows:sexpr,ordinal:i64)->string {
+  let out=buffer_new(); buffer_append(out,"{\"extractor\":\"naive/v1\",");
+  nf_json_string(out,"method",nf_get(row,"method")); buffer_append(out,",");
+  nf_json_string(out,"listing_id",nf_get(row,"listing")); buffer_append(out,",");
+  nf_json_string(out,"amount_text",nf_get(row,"amount")); buffer_append(out,",");
+  nf_json_string(out,"currency",nf_get(row,"currency")); buffer_append(out,",");
+  nf_json_string(out,"currency_source",nf_get(row,"currency_source")); buffer_append(out,",");
+  nf_json_nullable(out,"minor",nf_number(row,"minor")); buffer_append(out,",");
+  nf_json_nullable(out,"scale",shy_money_scale(nf_get(row,"currency"))); buffer_append(out,",");
+  nf_json_string(out,"basis",nf_get(row,"basis")); buffer_append(out,",");
+  nf_json_string(out,"qualifier",nf_get(row,"qualifier")); buffer_append(out,",");
+  nf_json_string(out,"source_selector",nf_get(row,"selector")); buffer_append(out,",");
+  nf_json_string(out,"source_attribute",nf_get(row,"attribute")); buffer_append(out,",");
+  nf_json_string(out,"source_span_kind",nf_get(row,"span_kind")); buffer_append(out,",");
+  nf_json_integer(out,"byte_offset",nf_number(row,"offset")); buffer_append(out,",");
+  nf_json_integer(out,"byte_length",nf_number(row,"span")); buffer_append(out,",");
+  nf_json_string(out,"source_span_blake3",shy_naive_span_digest(nf_number(row,"offset"),nf_number(row,"span"))); buffer_append(out,",");
+  nf_json_nullable(out,"normalized_offset",nf_number(row,"normalized_offset")); buffer_append(out,",");
+  nf_json_nullable(out,"normalized_length",nf_number(row,"normalized_length")); buffer_append(out,",");
+  nf_json_integer(out,"container_offset",nf_number(row,"container")); buffer_append(out,",");
+  nf_json_string(out,"snapshot_id",shy_naive_meta("snapshot_id")); buffer_append(out,",");
+  nf_json_string(out,"capture_blake3",shy_naive_meta("blake3")); buffer_append(out,",");
+  nf_json_string(out,"rule_blake3",shy_naive_meta("rule_hash")); buffer_append(out,",");
+  nf_json_string(out,"legacy_evidence_id",nf_get(row,"legacy_evidence_id")); buffer_append(out,",");
+  nf_json_integer(out,"source_sequence",ordinal); buffer_append(out,",");
+  nf_json_integer(out,"inspection_score",nf_score(row)); buffer_append(out,",");
+  nf_json_integer(out,"inspection_rank",nf_rank(row,rows,ordinal)); buffer_append(out,",");
+  nf_json_string(out,"diagnostic",nf_get(row,"issue")); buffer_append(out,",");
+  nf_json_string(out,"normalized_node_text",nf_get(row,"context")); buffer_append(out,",");
+  nf_json_string(out,"classification_context",nf_get(row,"classification_context")); buffer_append(out,",");
+  nf_json_string(out,"context_selector",nf_get(row,"context_selector")); buffer_append(out,",");
+  var context_offset=0-1;
+  if nf_get(row,"context_offset")!="" { context_offset=nf_number(row,"context_offset"); }
+  nf_json_nullable(out,"context_node_offset",context_offset); buffer_append(out,",");
+  buffer_append(out,"\"score_reasons\":"); nf_score_reasons(out,row);
+  buffer_append(out,",\"unresolved_fields\":"); nf_unknowns(out,row);
+  buffer_append(out,",\"stay_start\":null,\"stay_end\":null,\"guests\":null,\"taxes\":null,\"fees\":null");
+  buffer_append(out,",\"status\":\"needs_review\",\"independent_corroboration\":false,\"conflict\":");
+  if nf_conflicting(row,rows) { buffer_append(out,"true"); } else { buffer_append(out,"false"); }
+  buffer_append(out,"}");
+  return text_concat("",shy_naive_identify(buffer_text(out),"evidence_id"));
+}
+fn nf_identified_rows(rows:sexpr)->(sexpr,bool) {
+  var rest=rows; var index=0; var result=sx_nil();
+  while sx_kind(rest)==3 {
+    let row=sx_head(rest);
+    let json=nf_candidate_json(row,rows,index);
+    # Copy the identifier from JSON through the ordinary checked document
+    # adapter; it is never guessed from a string substring or byte position.
+    if shy_document_parse(json)!=1 { shy_document_close(); return (sx_nil(),false); }
+    if text_len(shy_document_text("",-1,"evidence_id"))!=64 { shy_document_close(); return (sx_nil(),false); }
+    var identified=nf_put(row,"evidence_id",shy_document_text("",-1,"evidence_id"));
+    identified=nf_put(identified,"json",json);
+    result=sx_cons(identified,result); rest=sx_tail(rest); index=index+1;
+  }
+  shy_document_close(); return (NL.basis_list_rev(result),true);
+}
+fn nf_group_json(row:sexpr,rows:sexpr)->string {
+  let out=buffer_new(); buffer_append(out,"{");
+  nf_json_string(out,"listing_id",nf_get(row,"listing")); buffer_append(out,",");
+  nf_json_integer(out,"container_offset",nf_number(row,"container")); buffer_append(out,",");
+  nf_json_string(out,"basis",nf_get(row,"basis")); buffer_append(out,",");
+  nf_json_string(out,"qualifier",nf_get(row,"qualifier")); buffer_append(out,",");
+  nf_json_string(out,"currency",nf_get(row,"currency")); buffer_append(out,",");
+  nf_json_nullable(out,"minor",nf_number(row,"minor")); buffer_append(out,",");
+  nf_json_integer(out,"same_page_representations",nf_same_page_count(row,rows));
+  buffer_append(out,",\"independent_sources\":1,\"status\":\"needs_review\",\"evidence_ids\":[");
+  var rest=rows; var first=true;
+  while sx_kind(rest)==3 {
+    let other=sx_head(rest);
+    if nf_equivalent(row,other) {
+      if !first { buffer_append(out,","); } first=false;
+      buffer_append(out,shy_naive_quote(nf_get(other,"evidence_id")));
+    }
+    rest=sx_tail(rest);
+  }
+  buffer_append(out,"],\"conflicting_evidence_ids\":["); rest=rows; first=true;
+  while sx_kind(rest)==3 {
+    let other=sx_head(rest);
+    if nf_contradiction(row,other) {
+      if !first { buffer_append(out,","); } first=false;
+      buffer_append(out,shy_naive_quote(nf_get(other,"evidence_id")));
+    }
+    rest=sx_tail(rest);
+  }
+  buffer_append(out,"],\"reconciliation\":");
+  if nf_conflicting(row,rows) { buffer_append(out,"\"material_conflict_requires_review\""); }
+  else {
+    if nf_same_page_count(row,rows)>1 { buffer_append(out,"\"equivalent_same_page_representations\""); }
+    else { buffer_append(out,"\"single_representation\""); }
+  }
+  buffer_append(out,"}"); return text_concat("",shy_naive_identify(buffer_text(out),"group_id"));
+}
+fn nf_artifact(options:sexpr,rows:sexpr)->string {
+  let (identified,ok)=nf_identified_rows(rows);
+  if !ok { return "null"; }
+  let out=buffer_new();
+  buffer_append(out,"{\"schema\":\"shylock.naive-find/v1\",\"extractor\":\"naive/v1\",\"mode\":\"deterministic\",\"status\":\"needs_review\",");
+  nf_json_string(out,"target",nf_get(options,"target")); buffer_append(out,",");
+  nf_json_string(out,"source_url",shy_naive_meta("source_url")); buffer_append(out,",");
+  nf_json_string(out,"blake3",shy_naive_meta("blake3")); buffer_append(out,",");
+  nf_json_string(out,"capture_id",shy_naive_meta("snapshot_id")); buffer_append(out,",");
+  # captured_at is a JSON number from the verified snapshot, not a string.
+  if shy_document_parse(shy_naive_meta("snapshot"))!=1 { shy_document_close(); return "null"; }
+  nf_json_integer(out,"captured_at",shy_document_number("",-1,"captured_at"));
+  shy_document_close(); buffer_append(out,",");
+  nf_json_string(out,"rule_source",shy_naive_rule()); buffer_append(out,",");
+  nf_json_string(out,"rule_blake3",shy_naive_meta("rule_hash")); buffer_append(out,",");
+  nf_json_string(out,"mulib_revision",shy_naive_meta("revision"));
+  buffer_append(out,","); nf_json_string(out,"legacy_status",shy_naive_meta("legacy_status"));
+  buffer_append(out,",\"snapshot\":"); buffer_append(out,shy_naive_meta("snapshot"));
+  buffer_append(out,",\"legacy_extraction\":"); buffer_append(out,shy_naive_meta("legacy"));
+  buffer_append(out,",\"candidates\":[");
+  var rest=identified; var first=true;
+  while sx_kind(rest)==3 {
+    if !first { buffer_append(out,","); } first=false;
+    buffer_append(out,nf_get(sx_head(rest),"json")); rest=sx_tail(rest);
+  }
+  buffer_append(out,"],\"groups\":["); rest=identified; first=true; var index=0;
+  while sx_kind(rest)==3 {
+    let row=sx_head(rest);
+    if nf_first_equivalent(row,identified,index) {
+      if !first { buffer_append(out,","); } first=false;
+      buffer_append(out,nf_group_json(row,identified));
+    }
+    index=index+1; rest=sx_tail(rest);
+  }
+  buffer_append(out,"],\"summary\":{");
+  let (groups,conflicts,unresolved)=nf_summary(rows);
+  nf_json_integer(out,"candidates",NL.basis_list_length(rows)); buffer_append(out,",");
+  nf_json_integer(out,"equivalence_groups",groups); buffer_append(out,",");
+  nf_json_integer(out,"conflicting_candidates",conflicts); buffer_append(out,",");
+  nf_json_integer(out,"unresolved_candidates",unresolved);
+  buffer_append(out,"},\"ranking_policy\":\"inspection-only/v1\",\"source_mapping\":\"exact-or-covering-text-fragments/v1\"}");
+  return buffer_text(out);
+}

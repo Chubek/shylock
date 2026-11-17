@@ -45,11 +45,13 @@ $(BUILD)/compiler/%.o: $(ON1X)/src/%.cpp $(BUILD)/ppx_schema.hpp
 $(BUILD)/on1xc: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o "$@"
 
-KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex readability browser-engine browserlocator dom-query openai-client
+KERNELS := kvdb elvi-scrape uri json fetch html-jsonld html-textstream html-tokenizer mune money statsprice histprice priceopt cryptohash tui termkey immgtk fontdraw latex readability browser-engine browserlocator dom-query openai-client regex scrape-rule
 VM_NATIVE := src/record.c src/mune_vm.c src/sandbox.c src/sandbox_os.c
-INTELLIGENCE_NATIVE := plugins/dragnet/flat.c plugins/dragnet/browser.c plugins/dragnet/openai.c plugins/dragnet/openai_tls.c
+NAIVE_NATIVE := plugins/dragnet/naive.c plugins/dragnet/naive-dom.c plugins/dragnet/naive-regex.c plugins/dragnet/naive-money.c plugins/dragnet/naive-span.c
+INTELLIGENCE_NATIVE := plugins/dragnet/flat.c plugins/dragnet/browser.c plugins/dragnet/openai.c plugins/dragnet/openai_tls.c $(NAIVE_NATIVE)
 NATIVE := plugins/poindexter/store.c plugins/poindexter/sheet.c plugins/poindexter/ui.c plugins/poindexter/tui.c plugins/poindexter/gui.c src/bridge.c src/document.c src/engine.c src/context.c src/latex.c src/evidence.c src/series.c src/registry.c src/extensions.c plugins/dragnet/dragnet.c plugins/dragnet/workflow.c plugins/dragnet/transport.c $(INTELLIGENCE_NATIVE) $(VM_NATIVE)
 HEADERS := src/shylock.h include/shylock-sdk.h plugins/dragnet/dragnet.h plugins/dragnet/workflow.h plugins/dragnet/intelligence.h src/document.h src/engine.h src/latex.h src/extensions.h src/poindexter.h src/mune_vm.h src/sandbox.h plugins/poindexter/sheet.h plugins/poindexter/ui.h
+HEADERS += plugins/dragnet/naive.h plugins/dragnet/naive-rules.h
 $(BUILD)/native-config.json: FORCE tools/native_config.py
 	$(PYTHON) tools/native_config.py "$@" "$(CC)" "$(CFLAGS)" "$(GUI_FLAGS) $(OPENAI_TLS_FLAGS)" "$(abspath $(MULIB))" "$(MULIB_REVISION)"
 
@@ -85,8 +87,10 @@ $(BUILD)/shylock-worker: src/worker.on1x src/worker.c $(VM_NATIVE) $(HEADERS) $(
 	  --mulib mune --mulib json --mulib cryptohash \
 	  $(foreach file,$(VM_NATIVE) src/worker.c,--extra-c $(file)) -o "$@"
 
-$(BUILD)/native-tests: tests/native.on1x tests/native.c tests/intelligence.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/native-config.json Makefile
+$(BUILD)/native-tests: tests/native.on1x tests/naive_policy.on1x $(wildcard src/dragnet_*.on1x) tests/native.c tests/intelligence.c tests/naive.c tests/fixtures/fresh.lua $(NATIVE) $(HEADERS) $(ON1XC) $(BUILD)/ppx-fields $(BUILD)/native-config.json Makefile
+	ON1X_PPX_SCHEMA="$(abspath $(ON1X)/grammar/PPX.schema.json)" \
 	$(PYTHON) "$(ON1X)/tools/on1x-build.py" "$<" --on1xc "$(ON1XC)" --cc "$(CC)" \
+	  --ppx fields "$(abspath $(BUILD)/ppx-fields)" --ppx-timeout-ms "$(PPX_TIMEOUT_MS)" \
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" \
 	  --cflag='-DSHY_MULIB_REVISION="$(MULIB_REVISION)"' \
 	  $(foreach flag,$(CFLAGS),--cflag=$(flag)) \
@@ -94,7 +98,7 @@ $(BUILD)/native-tests: tests/native.on1x tests/native.c tests/intelligence.c tes
 	  --cflag=-ldl \
 	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
 	  $(foreach kernel,$(KERNELS),--mulib $(kernel)) \
-	  $(foreach file,$(NATIVE) tests/native.c tests/intelligence.c,--extra-c $(file)) -o "$@"
+	  $(foreach file,$(NATIVE) tests/native.c tests/intelligence.c tests/naive.c,--extra-c $(file)) -o "$@"
 
 $(BUILD)/sandbox-probes: tests/sandbox_probe.c src/sandbox_os.c src/sandbox.h src/mune_vm.h $(BUILD)/native-config.json Makefile
 	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WORKER_CFLAGS) -I"$(MULIB)/include" \
@@ -112,7 +116,7 @@ $(BUILD)/document-allocation-tests: tests/document_alloc.on1x tests/document_all
 	  --stdlib "$(ON1X)/stdlib" --mulib-root "$(MULIB)" --mulib json --mulib cryptohash --mulib latex \
 	  --mulib money --mulib histprice --mulib statsprice --mulib priceopt \
 	  --mulib elvi-scrape --mulib html-jsonld --mulib html-tokenizer --cflag=-ldl \
-	  --mulib readability --mulib browser-engine --mulib browserlocator --mulib dom-query --mulib openai-client \
+	  --mulib readability --mulib browser-engine --mulib browserlocator --mulib dom-query --mulib openai-client --mulib regex --mulib scrape-rule \
 	  $(foreach flag,$(OPENAI_TLS_FLAGS),--cflag=$(flag)) \
 	  $(foreach file,$(DRAGNET_NATIVE) $(INTELLIGENCE_NATIVE),--extra-c $(file)) \
 	  --extra-c tests/document_alloc.c --extra-c src/document.c --extra-c src/engine.c --extra-c src/context.c --extra-c src/series.c --extra-c src/latex.c --extra-c src/record.c \
@@ -128,6 +132,7 @@ test: $(BUILD)/shylock $(BUILD)/native-tests $(BUILD)/sandbox-probes $(BUILD)/me
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" CC="$(CC)" SDK_TEST_CFLAGS="$(CFLAGS)" $(PYTHON) tests/sdk.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/dragnet.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/intelligence.py
+	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/naive.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/extensions.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/calculation.py
 	SHY_BINARY="$(abspath $(BUILD)/shylock)" $(PYTHON) tests/reports.py

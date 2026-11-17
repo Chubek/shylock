@@ -1,0 +1,19 @@
+{
+  "schema": "shylock.naive-rule/v1",
+  "host": "example.org",
+  "target": "rental_price",
+  "container": ".listing-card",
+  "listing": {"selector": ".listing-card", "attribute": "data-listing-id"},
+  "fields": [
+    {"selector": ".price", "attribute": "data-price", "kind": "nightly_rate", "regex": "", "priority": 90, "currency_selector": "", "currency_attribute": ""},
+    {"selector": ".cleaning-fee", "attribute": "", "kind": "cleaning_fee", "regex": "", "priority": 70, "currency_selector": "", "currency_attribute": ""}
+  ],
+  "currency": "EUR",
+  "currency_source": "trusted_site_rule",
+  "decimal_separator": ",",
+  "group_separator": ".",
+  "maximum_candidates": 128,
+  "maximum_containers": 32,
+  "include_existing": false,
+  "fallback": "model_review"
+}

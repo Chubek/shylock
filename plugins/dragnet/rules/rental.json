@@ -1,0 +1,21 @@
+{
+  "schema": "shylock.naive-rule/v1",
+  "host": "*",
+  "target": "rental_price",
+  "container": ".listing-card",
+  "listing": {"selector": ".listing-title", "attribute": ""},
+  "fields": [
+    {"selector": ".price", "attribute": "", "kind": "nightly_rate", "regex": "", "priority": 80, "currency_selector": "", "currency_attribute": "", "context_selector": ".basis"},
+    {"selector": ".cleaning-fee", "attribute": "", "kind": "cleaning_fee", "regex": "", "priority": 80, "currency_selector": "", "currency_attribute": ""},
+    {"selector": ".deposit", "attribute": "", "kind": "refundable_deposit", "regex": "", "priority": 80, "currency_selector": "", "currency_attribute": ""},
+    {"selector": ".total-price", "attribute": "", "kind": "stay_total", "regex": "", "priority": 80, "currency_selector": "", "currency_attribute": ""}
+  ],
+  "currency": "",
+  "currency_source": "evidence",
+  "decimal_separator": "",
+  "group_separator": "",
+  "maximum_candidates": 128,
+  "maximum_containers": 64,
+  "include_existing": true,
+  "fallback": "none"
+}

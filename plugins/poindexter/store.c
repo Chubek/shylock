@@ -4,6 +4,7 @@
 #include "../../src/poindexter.h"
 #include "mulib-kvdb.h"
 #include "mulib-money.h"
+#include "../dragnet/naive.h"
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -66,7 +67,7 @@ static int context_valid(void)
 {
     if (mulib_json_typeof(context) != MULIB_JSON_OBJECT) return 0;
     static const char *const allowed[] = { "listing_id", "stay_start", "stay_end", "guests",
-        "basis", "qualifier", "currency", "scale", "taxes", "fees" };
+        "basis", "qualifier", "currency", "scale", "taxes", "fees", "conflict_resolution" };
     for (size_t i = 0; i < mulib_json_size(context); ++i) {
         size_t n, k;
         const char *key = mulib_json_key(context, i, &n);
@@ -96,7 +97,7 @@ int64_t shy_review_load(const char *path, const char *html, const char *context_
 {
     mulib_json_destroy(capture);
     capture = read_json(path, SHY_PAGE_LIMIT);
-    if (!capture || !hash_valid(shy_text(capture, "blake3")) ||
+    if (!capture || !strcmp(shy_text(capture,"schema"),"shylock.naive-find/v1") || !hash_valid(shy_text(capture, "blake3")) ||
         !*shy_text(capture, "source_url") ||
         shy_integer(capture, "captured_at", INT64_C(253402300799)) < 0 ||
         mulib_json_typeof(mulib_json_get(capture, "candidates")) != MULIB_JSON_ARRAY ||
@@ -119,6 +120,35 @@ static mulib_json_t *candidate(int64_t index)
 {
     return index < 0 ? NULL : mulib_json_at(mulib_json_get(capture, "candidates"), (size_t)index);
 }
+
+int64_t shy_review_naive(const char *html,const char *context_path)
+{
+    const mulib_json_t *record=shy_naive_verified();
+    if (!db || !record) return 0;
+    mulib_json_destroy(capture); capture=shy_clone(record);
+    free(snapshot); snapshot=NULL; snapshot_length=0; verified=0;
+    const char *bytes=shy_text(mulib_json_get(record,"snapshot"),"html");
+    if (*html) {
+        snapshot=shy_read(html,SHY_PAGE_LIMIT,&snapshot_length);
+        if (!snapshot || snapshot_length!=strlen(bytes) || memcmp(snapshot,bytes,snapshot_length)) return 0;
+    } else {
+        snapshot_length=strlen(bytes); snapshot=malloc(snapshot_length+1);
+        if (snapshot) memcpy(snapshot,bytes,snapshot_length+1);
+    }
+    if (!capture || !snapshot || !context_load(context_path)) return 0;
+    verified=1; return 1;
+}
+static const mulib_json_t *review_evidence(void)
+{
+    const mulib_json_t *evidence=mulib_json_get(resolved,"evidence");
+    return evidence ? evidence : resolved;
+}
+int64_t shy_review_is_naive(void)
+{ return !strcmp(shy_text(review_evidence(),"extractor"),"naive/v1"); }
+int64_t shy_review_conflict(void)
+{ return mulib_json_boolean(mulib_json_get(review_evidence(),"conflict")); }
+const char *shy_review_source_field(const char *key)
+{ return shy_text(review_evidence(),key); }
 
 static int merge_context(mulib_json_t *row)
 {
@@ -154,6 +184,8 @@ int64_t shy_review_prepare(int64_t index)
 {
     mulib_json_destroy(resolved);
     resolved = shy_clone(candidate(index));
+    if (resolved && !strcmp(shy_text(capture,"schema"),"shylock.naive-find/v1") &&
+        !shy_add(resolved,"evidence",shy_clone(candidate(index)))) return 0;
     return resolved && merge_context(resolved);
 }
 
@@ -491,6 +523,22 @@ int64_t shy_store_replay(const char *id)
     return shy_emit(record);
 fail:
     mulib_json_destroy(record); return shy_error("cannot replay a verified stored extraction");
+}
+
+int64_t shy_store_naive_begin(const char *id)
+{
+    if (!hash_valid(id)) return -1;
+    char key[96],digest[65];
+    snprintf(key,sizeof key,"extraction/%s",id);
+    mulib_json_t *record=get_json(key,strlen(key));
+    if (!record || !shy_json_digest(record,NULL,digest) || strcmp(id,digest)) { mulib_json_destroy(record); return -1; }
+    if (strcmp(shy_text(record,"schema"),"shylock.naive-find/v1")) { mulib_json_destroy(record); return 0; }
+    const void *bytes; size_t n;
+    snprintf(key,sizeof key,"snapshot/%s",shy_text(record,"blake3"));
+    const char *expected=shy_text(mulib_json_get(record,"snapshot"),"html");
+    int ok=mulib_kvdb_get(db,key,strlen(key),&bytes,&n)==MULIB_KVDB_OK && n==strlen(expected) &&
+        !memcmp(bytes,expected,n) && shy_naive_begin_record(record);
+    mulib_json_destroy(record); return ok ? 1 : -1;
 }
 
 int64_t shy_store_incompatible(int64_t index, const char *field, int64_t reference, const char *expected)

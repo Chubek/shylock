@@ -10,6 +10,7 @@ import "pricing.on1x";
 import "model.on1x";
 import "dragnet.on1x";
 import "intelligence.on1x";
+import "dragnet_naive.on1x";
 import std.os.CommandLine as CLI;
 import std.os.OS_Path as Path;
 import std.parsec.parsec as Scan;
@@ -42,6 +43,12 @@ fn run_command() -> i64 {
   let d = CLI.basis_command_line_get_env("SHY_4");
   if command=="flatten" && count==1 { return shy_flatten_command(a); }
   if command=="find" && count==2 { return shy_find_command(a,b); }
+  if command=="find-rule" && count==3 { return naive_find(a,b,c,"deterministic","",false); }
+  if command=="find-rule" && count==4 { return naive_find(a,b,c,d,"",false); }
+  if command=="find-rule" && count==6 && CLI.basis_command_line_get_env("SHY_6")=="--live" {
+    return naive_find(a,b,c,d,CLI.basis_command_line_get_env("SHY_5"),true);
+  }
+  if command=="find-rule-replay" && count==1 { return naive_replay(a,true); }
   if command=="browse" && count==1 { return browser_run(a); }
   if command=="openai-account" && count==1 { return openai_profile(a,"","account",false); }
   if command=="model-extract" && count==4 && d=="--live" { return openai_profile(b,a,c,true); }
@@ -149,6 +156,8 @@ fn run_command() -> i64 {
     println("browse BROWSER_JOB_JSON");
     println("flatten SNAPSHOT_OR_IR_JSON");
     println("find SNAPSHOT_OR_IR_JSON TARGET");
+    println("find-rule SOURCE_JSON RULE_JSON TARGET [deterministic | hybrid|model PROFILE --live]");
+    println("find-rule-replay ARTIFACT_JSON");
     println("openai-account OPENAI_PROFILE_JSON");
     println("model-extract SNAPSHOT_OR_IR_JSON OPENAI_PROFILE_JSON TARGET --live");
     println("extension CONFIG_JSON EVENT PAYLOAD_JSON");
